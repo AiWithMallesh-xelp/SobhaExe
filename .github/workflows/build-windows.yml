@@ -37,7 +37,14 @@ jobs:
       - name: Zip exe + config (small download)
         shell: pwsh
         run: |
-          Compress-Archive -Path release\auto.exe, release\config.json, release\README_CLIENT.md `
+          # Get the exe name from build script to avoid hardcoding
+          $APPNAME = (Select-String -Path build_windows.ps1 -Pattern '\$APPNAME\s*=\s*"(\w+)"').Matches[0].Groups[1].Value
+          Write-Host "Zipping: release\$APPNAME.exe"
+          # Ensure README is in release/ (build script copies it if present)
+          if (!(Test-Path "release\README_CLIENT.md") -and (Test-Path "README_CLIENT.md")) {
+            Copy-Item README_CLIENT.md release\README_CLIENT.md -Force
+          }
+          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md `
             -DestinationPath release\sobha-app-only.zip -Force
 
       # ── Zip pw-browsers separately (large, optional) ─────────────────────
