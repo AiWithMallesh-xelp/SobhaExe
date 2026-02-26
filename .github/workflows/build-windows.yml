@@ -1,0 +1,30 @@
+name: Build Windows Portable EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build portable EXE
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          ./build_windows.ps1
+
+      - name: Upload release folder as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sobha-release
+          path: release/**
+          retention-days: 14

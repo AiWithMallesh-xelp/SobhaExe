@@ -1,0 +1,8 @@
+{
+    "d365_url": "https://sobhauat.sandbox.operations.dynamics.com/?cmp=rel&mi=LedgerJournalTable_CustPaym",
+    "journal_name": "ARBR Customers Receipt",
+    "browser_headless": false,
+    "browser_slow_mo_ms": 1000,
+    "page_load_timeout_ms": 60000,
+    "page_load_wait_seconds": 5
+}
