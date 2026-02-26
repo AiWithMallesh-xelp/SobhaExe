@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 REQUIRED_CONFIG_KEYS = (
     "d365_url",
-    "auth_json_path",
+    # auth_json_path is optional: defaults to auth_{username}.json next to the exe
     "journal_name",
     "browser_headless",
     "browser_slow_mo_ms",
