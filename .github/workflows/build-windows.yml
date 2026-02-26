@@ -3,6 +3,9 @@ name: Build Windows Portable EXE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to create a GitHub Release
+
 jobs:
   build:
     runs-on: windows-latest
@@ -22,9 +25,51 @@ jobs:
           Set-ExecutionPolicy -Scope Process Bypass -Force
           ./build_windows.ps1
 
+      # ── Artifact upload (quick access from the Actions run page) ──────────
       - name: Upload release folder as artifact
         uses: actions/upload-artifact@v4
         with:
           name: sobha-release
           path: release/**
           retention-days: 14
+
+      # ── Zip the exe + config + README separately (small, always works) ────
+      - name: Zip exe + config (small download)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release\auto.exe, release\config.json, release\README_CLIENT.md `
+            -DestinationPath release\sobha-app-only.zip -Force
+
+      # ── Zip pw-browsers separately (large, optional) ─────────────────────
+      - name: Zip pw-browsers separately
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release\pw-browsers `
+            -DestinationPath release\sobha-pw-browsers.zip -Force
+
+      # ── Create a GitHub Release with all files as direct download links ──
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Sobha Build ${{ github.run_number }}"
+          body: |
+            ## Download Instructions
+
+            ### Option A – All-in-one (may be large ~300MB)
+            Download via GitHub CLI on Linux:
+            ```
+            gh run download ${{ github.run_id }} --repo ${{ github.repository }} -n sobha-release -D ./sobha-release
+            ```
+
+            ### Option B – Split downloads (recommended on slow connections)
+            1. Download **sobha-app-only.zip** (small) → contains `auto.exe`, `config.json`, `README_CLIENT.md`
+            2. Download **sobha-pw-browsers.zip** (large ~250MB) → contains `pw-browsers/`
+            3. Extract both into the **same folder**
+
+            Client runs: double-click `auto.exe` ✅
+          files: |
+            release/sobha-app-only.zip
+            release/sobha-pw-browsers.zip
+          draft: false
+          prerelease: false
