@@ -4,7 +4,7 @@
 
 1. Extract the ZIP fully — **do not run from inside the ZIP**.
 2. Open the extracted folder.
-3. Double-click **auto.exe**.
+3. Double-click **sobha.exe**.
 
 > If Windows SmartScreen appears: click **More info** → **Run anyway**.
 
@@ -15,8 +15,8 @@
 1. Click the **Login** button in the app.
 2. A browser will open — sign in to your Microsoft / D365 account.
 3. Once you are on the D365 page, click the blue **"Login Success"** button in the browser.
-4. A file called **auth.json** is created in the same folder as `auto.exe`.
-5. Future runs will reuse this session automatically.
+4. A file called **auth.json** is created in the same folder as `sobha.exe`.
+5. Future runs will reuse this session sobhamatically.
 
 ---
 
@@ -26,7 +26,7 @@ Keep all of these in the **same folder** at all times:
 
 | File / Folder | Required? | Purpose |
 |---|---|---|
-| `auto.exe` | ✅ Yes | The application |
+| `sobha.exe` | ✅ Yes | The application |
 | `config.json` | ✅ Yes | App configuration (D365 URL, journal name, etc.) |
 | `pw-browsers/` | ✅ Yes | Browser engine — **do not delete or rename** |
 | `auth.json` | Created after first login | Stores your login session |
