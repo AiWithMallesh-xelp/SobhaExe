@@ -454,21 +454,6 @@ class Application(tk.Tk):
         top_actions.pack(side="right")
         tk.Button(
             top_actions,
-            text="Open Config",
-            command=self._open_config_file,
-            cursor="hand2",
-            relief="flat",
-            bg="#5b7bd8",
-            fg="white",
-            activebackground="#4a6bc8",
-            activeforeground="white",
-            font=("Segoe UI", 10, "bold"),
-            padx=14,
-            pady=7,
-        ).pack(side="right", padx=(0, 8))
-
-        tk.Button(
-            top_actions,
             text="Login",
             command=self._run_login_automation,
             cursor="hand2",
