@@ -1312,38 +1312,8 @@ def test_final8(records=None):
                   content.appendChild(title);
                   content.appendChild(text);
 
-                  // Close button (optional)
-                  const close = document.createElement('button');
-                  close.type = 'button';
-                  close.textContent = '❌';
-                  close.setAttribute('aria-label', 'Dismiss');
-                  close.title = 'Dismiss';
-                  Object.assign(close.style, {
-                    marginLeft: 'auto',
-                    width: '34px',
-                    height: '34px',
-                    display: 'grid',
-                    placeItems: 'center',
-                    border: '0',
-                    borderRadius: '12px',
-                    background: 'rgba(15,23,42,0.06)',
-                    cursor: 'pointer',
-                    lineHeight: '1',
-                    transition: 'transform .12s ease, background .12s ease'
-                  });
-                  close.addEventListener('mouseenter', () => {
-                    close.style.background = 'rgba(15,23,42,0.10)';
-                    close.style.transform = 'scale(1.04)';
-                  });
-                  close.addEventListener('mouseleave', () => {
-                    close.style.background = 'rgba(15,23,42,0.06)';
-                    close.style.transform = 'scale(1)';
-                  });
-                  close.addEventListener('click', () => wrap.remove());
-
                   row.appendChild(icon);
                   row.appendChild(content);
-                  row.appendChild(close);
                   wrap.appendChild(row);
 
                   // Actions row
@@ -1354,33 +1324,6 @@ def test_final8(records=None):
                     gap: '10px',
                     marginTop: '12px'
                   });
-
-                  // Secondary: Not yet (optional)
-                  const later = document.createElement('button');
-                  later.type = 'button';
-                  later.textContent = 'Not yet';
-                  Object.assign(later.style, {
-                    padding: '9px 12px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(15,23,42,0.14)',
-                    background: 'rgba(255,255,255,0.70)',
-                    color: '#0f172a',
-                    fontWeight: '700',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    transition: 'transform .12s ease, background .12s ease, box-shadow .12s ease'
-                  });
-                  later.addEventListener('mouseenter', () => {
-                    later.style.background = 'rgba(255,255,255,0.95)';
-                    later.style.boxShadow = '0 10px 26px rgba(0,0,0,0.10)';
-                    later.style.transform = 'translateY(-1px)';
-                  });
-                  later.addEventListener('mouseleave', () => {
-                    later.style.background = 'rgba(255,255,255,0.70)';
-                    later.style.boxShadow = 'none';
-                    later.style.transform = 'translateY(0)';
-                  });
-                  later.addEventListener('click', () => wrap.remove());
 
                   // Primary: Continue
                   const p = document.createElement('button');
@@ -1426,7 +1369,6 @@ def test_final8(records=None):
                     wrap.remove();
                   });
 
-                  actions.appendChild(later);
                   actions.appendChild(p);
                   wrap.appendChild(actions);
 
