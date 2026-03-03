@@ -117,5 +117,5 @@ Write-Host "  Contents sent to client:" -ForegroundColor Yellow
 Get-ChildItem ".\release" | Format-Table Name, Length -AutoSize
 Write-Host ""
 Write-Host "  Zip the 'release' folder and send to client." -ForegroundColor Yellow
-Write-Host "  Client: double-click auto.exe  ✅"           -ForegroundColor Green
+Write-Host "  Client: double-click sobha.exe  ✅"          -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
