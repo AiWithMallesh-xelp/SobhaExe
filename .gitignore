@@ -1,3 +1,9 @@
 venv/
 __pycache__/
 *.pyc
+auth_xelpmoc.json
+pw-browsers/
+dist/
+build/
+release/
+*.spec

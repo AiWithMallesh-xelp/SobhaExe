@@ -70,11 +70,11 @@ jobs:
             ```
 
             ### Option B – Split downloads (recommended on slow connections)
-            1. Download **sobha-app-only.zip** (small) → contains `auto.exe`, `config.json`, `README_CLIENT.md`
+            1. Download **sobha-app-only.zip** (small) → contains `sobha.exe`, `config.json`, `README_CLIENT.md`
             2. Download **sobha-pw-browsers.zip** (large ~250MB) → contains `pw-browsers/`
             3. Extract both into the **same folder**
 
-            Client runs: double-click `auto.exe` ✅
+            Client runs: double-click `sobha.exe` ✅
           files: |
             release/sobha-app-only.zip
             release/sobha-pw-browsers.zip

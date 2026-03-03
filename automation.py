@@ -540,26 +540,182 @@ def test_final8(records=None):
             page.get_by_role("row", name=CONFIG["journal_name"], exact=True).get_by_label("Name").click()
             page.get_by_role("button", name="Lines", exact=True).click()
 
-            processed_records = []
+            iterated_records = []
+            reuse_same_row_next = False
+            same_row_precleared = False
+            manual_save_done = False
 
             # Iterate over records
             for idx, record in enumerate(records):
                 print(f"Processing record {idx + 1}/{len(records)}")
-                if idx > 0:
+                force_manual_wipe_before_fill = False
+                if idx > 0 and not reuse_same_row_next:
                     try:
                         page.get_by_role("button", name=" New").click()
                     except PlaywrightError:
                         page.get_by_role("button", name=" New").first.click()
-                    time.sleep(3)
+                    time.sleep(0.5)
+
+                def _verify_row_clear_state():
+                    """Best-effort quick check that key editable fields are blank."""
+                    try:
+                        return bool(
+                            page.evaluate(
+                                """
+                                () => {
+                                    const isVisible = (el) => {
+                                        if (!el) return false;
+                                        const st = window.getComputedStyle(el);
+                                        if (st.visibility === 'hidden' || st.display === 'none') return false;
+                                        const r = el.getBoundingClientRect();
+                                        return r.width > 0 && r.height > 0;
+                                    };
+                                    const pick = (selector) => {
+                                        const nodes = [...document.querySelectorAll(selector)];
+                                        return nodes.find((el) => {
+                                            const id = el.id || '';
+                                            return isVisible(el) && !id.startsWith('Sel_');
+                                        }) || null;
+                                    };
+                                    const read = (selector) => {
+                                        const el = pick(selector);
+                                        return el ? String(el.value || '').trim() : '';
+                                    };
+                                    const vals = [
+                                        read("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']"),
+                                        read("input[aria-label='Credit']"),
+                                        read("input[aria-label='Reference date']"),
+                                        read("input[aria-label='Payment reference']"),
+                                        read("input[aria-label='Method of payment']")
+                                    ];
+                                    return vals.every((v) => v === '');
+                                }
+                                """
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Row clear verification unavailable: {e}")
+                        return False
+
+                def _clear_current_row_fields_fallback():
+                    """Fallback clear path using direct control interactions."""
+                    value_date_clear = page.get_by_role("combobox", name="Value date")
+                    credit_clear = page.get_by_role("textbox", name="Credit")
+                    ref_date_clear = page.get_by_role("combobox", name="Reference date")
+                    pay_ref_clear = page.get_by_role("textbox", name="Payment reference")
+                    account_clear = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
+                    method_clear = page.get_by_label("Method of payment")
+                    if idx > 0:
+                        value_date_clear = value_date_clear.first
+                        credit_clear = credit_clear.first
+                        ref_date_clear = ref_date_clear.first
+                        pay_ref_clear = pay_ref_clear.first
+                        account_clear = account_clear.first
+                        method_clear = method_clear.first
+
+                    def _wipe(locator):
+                        try:
+                            locator.fill("")
+                        except Exception:
+                            try:
+                                locator.click()
+                                locator.press("Control+A")
+                                locator.press("Backspace")
+                            except Exception:
+                                pass
+
+                    _wipe(value_date_clear)
+                    _wipe(account_clear)
+                    _wipe(credit_clear)
+                    _wipe(ref_date_clear)
+                    _wipe(pay_ref_clear)
+                    _wipe(method_clear)
+                    return _verify_row_clear_state()
+
+                def _clear_current_row_fields_fast():
+                    """Fast clear path using one JS pass on the active/visible row."""
+                    try:
+                        fast_clear_ok = page.evaluate(
+                            """
+                            () => {
+                                const isVisible = (el) => {
+                                    if (!el) return false;
+                                    const st = window.getComputedStyle(el);
+                                    if (st.visibility === 'hidden' || st.display === 'none') return false;
+                                    const r = el.getBoundingClientRect();
+                                    return r.width > 0 && r.height > 0;
+                                };
+
+                                const accountInput = document.querySelector("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']");
+                                const rowCandidates = [
+                                    document.querySelector("tr[aria-selected='true']"),
+                                    document.querySelector("tr[aria-current='true']"),
+                                    accountInput ? accountInput.closest('tr') : null
+                                ].filter(Boolean);
+                                const activeRow = rowCandidates.find(isVisible) || null;
+
+                                const pickInput = (selector) => {
+                                    const scoped = activeRow
+                                        ? [...activeRow.querySelectorAll(selector)]
+                                        : [];
+                                    const global = [...document.querySelectorAll(selector)];
+                                    const all = [...scoped, ...global];
+                                    return all.find((el) => {
+                                        const id = el.id || '';
+                                        return isVisible(el) && !id.startsWith('Sel_');
+                                    }) || null;
+                                };
+
+                                const clearValue = (selector) => {
+                                    const el = pickInput(selector);
+                                    if (!el) return false;
+                                    el.value = '';
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                };
+
+                                const changed = [
+                                    clearValue("input[aria-label='Value date']"),
+                                    clearValue("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']"),
+                                    clearValue("input[aria-label='Credit']"),
+                                    clearValue("input[aria-label='Reference date']"),
+                                    clearValue("input[aria-label='Payment reference']"),
+                                    clearValue("input[aria-label='Method of payment']")
+                                ];
+                                return changed.some(Boolean);
+                            }
+                            """
+                        )
+                        if not fast_clear_ok:
+                            print("Fast clear did not target row fields; using fallback clear.")
+                            return _clear_current_row_fields_fallback()
+                        if not _verify_row_clear_state():
+                            print("Fast clear verification failed; retrying with fallback clear.")
+                            return _clear_current_row_fields_fallback()
+                        return True
+                    except Exception as e:
+                        print(f"Fast clear failed, falling back to control-by-control clear: {e}")
+                        return _clear_current_row_fields_fallback()
+
+                if reuse_same_row_next:
+                    print(f"[{time.time():.3f}] Continue path: entering same-row reuse iteration.")
+                    force_manual_wipe_before_fill = True
+                    reuse_same_row_next = False
+                    same_row_precleared = False
 
                 # Extract data
                 val_date = _normalize_reference_date(record.get("value_date", "2/17/2026"))
-                acc_no = record.get("account", "-23620")
+                acc_no = str(record.get("account", "")).strip()
                 credit_amt = record.get("credit", "25,000")
-                offset_acc = record.get("offset_account", "Axis Bank Limited A/C No.")
+                # Offset account is auto-filled by D365 when a customer account is selected.
                 ref_date = _normalize_reference_date(record.get("reference_date", "2/17/2026"))
                 pay_ref = record.get("payment_reference", "YESBANK")
                 pay_method = record.get("method_of_payment", "Wire Wire Transfer")
+                if not acc_no:
+                    raise ValueError(
+                        f"Missing account in record {idx + 1}; refusing implicit fallback account."
+                    )
 
                 # Fill form
                 value_date_loc = page.get_by_role("combobox", name="Value date")
@@ -572,52 +728,61 @@ def test_final8(records=None):
                     ref_date_loc = ref_date_loc.first
                     pay_ref_loc = pay_ref_loc.first
 
+                if force_manual_wipe_before_fill:
+                    print(f"[{time.time():.3f}] Continue path: starting manual row wipe before fill.")
+                    for loc in (value_date_loc, credit_loc, ref_date_loc, pay_ref_loc):
+                        try:
+                            loc.click()
+                            loc.press("Control+A")
+                            loc.press("Backspace")
+                        except Exception:
+                            pass
+
                 value_date_loc.press_sequentially(val_date, delay=200)
 
-                account_open_btn = page.locator(
-                    "[id^='LedgerJournalTrans_AccountNum_'][id$='_segmentedEntryLookup']"
-                ).get_by_role("button", name="Open")
+                # --- Account field: strict manual entry (no locator fallback chain) ---
+                account_field = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
                 if idx > 0:
-                    account_open_btn = account_open_btn.first
-                account_open_btn.click()
-                try:
-                    page.get_by_role("gridcell", name=acc_no).get_by_label("Customer account").click()
-                except PlaywrightError:
-                    print(f"Could not find account {acc_no}")
+                    account_field = account_field.first
+                account_field.wait_for(state="visible", timeout=200)
+                account_field.click()
+                account_field.press("Control+A")
+                account_field.press("Backspace")
+                account_field.press_sequentially(acc_no, delay=20)
 
+                # Read back and retry once if the control kept stale value.
+                try:
+                    entered_account = (account_field.input_value() or "").strip()
+                    if entered_account and entered_account.casefold() != acc_no.casefold():
+                        account_field.click()
+                        account_field.press("Control+A")
+                        account_field.press("Backspace")
+                        account_field.press_sequentially(acc_no, delay=20)
+                except PlaywrightError:
+                    pass
+
+                # Move directly to Credit; blur will commit account without an explicit Tab.
                 credit_loc.click()
+                if force_manual_wipe_before_fill:
+                    try:
+                        credit_loc.press("Control+A")
+                        credit_loc.press("Backspace")
+                    except Exception:
+                        pass
                 credit_loc.press_sequentially(credit_amt, delay=200)
 
-                def _wait_offset_committed(offset_input_id: str) -> bool:
-                    try:
-                        page.wait_for_function(
-                            """
-                            ([inputId, expected]) => {
-                                const el = document.getElementById(inputId);
-                                if (!el) return false;
-                                const title = (el.getAttribute('title') || '').trim();
-                                const saved = (el.getAttribute('data-dyn-savedtooltip') || '').trim();
-                                const val = (el.value || '').trim();
-                                const valid = (el.getAttribute('aria-invalid') || '').toLowerCase() === 'false';
-                                return title === expected || saved === expected || (val === expected && valid);
-                            }
-                            """,
-                            arg=[offset_input_id, str(offset_acc).strip()],
-                            timeout=1500,
-                        )
-                        return True
-                    except PlaywrightTimeoutError:
-                        return False
-
-                page.locator("#LedgerJournalTrans_OffsetAccount_0_segmentedEntryLookup").get_by_role("button", name="Open").click()
-                try:
-                    page.get_by_title(offset_acc).click()
-                except Exception:
-                    print(f"Warning: Could not select offset account '{offset_acc}'")
+                # No offset account interaction needed — D365 auto-fills it.
 
                 paym_mode_input = page.get_by_label("Method of payment")
                 if idx > 0:
                     paym_mode_input = paym_mode_input.first
+                if force_manual_wipe_before_fill:
+                    try:
+                        paym_mode_input.click(force=True)
+                        paym_mode_input.press("Control+A")
+                        paym_mode_input.press("Backspace")
+                    except Exception:
+                        pass
                 def _select_method_of_payment(force=False):
                     try:
                         current_method = (paym_mode_input.input_value() or "").strip().lower()
@@ -625,7 +790,12 @@ def test_final8(records=None):
                             return
                     except Exception:
                         pass
-                    paym_mode_input.click()
+                    # Scroll the Method of payment field into view first
+                    try:
+                        paym_mode_input.scroll_into_view_if_needed(timeout=5000)
+                    except (PlaywrightTimeoutError, PlaywrightError):
+                        pass
+                    paym_mode_input.click(force=True)
                     paym_mode_input.press("Alt+ArrowDown")
                     # Avoid strict-mode collisions by targeting the open dropdown rows only.
                     method_selected = False
@@ -656,13 +826,29 @@ def test_final8(records=None):
                         except Exception:
                             pass
                     if not method_selected:
-                        # Last fallback to original approach with .first to avoid strict violation.
-                        page.get_by_role("row", name=pay_method).first.get_by_label("Method of payment").first.click()
+                        # Last fallback: use JS to scroll into view and click
+                        try:
+                            page.evaluate(
+                                """
+                                () => {
+                                    const el = document.querySelector("input[aria-label='Method of payment']");
+                                    if (el) { el.scrollIntoView({block: 'center'}); el.click(); }
+                                }
+                                """
+                            )
+                        except Exception as e:
+                            print(f"Warning: Method of payment all fallbacks failed for '{pay_method}': {e}")
 
                 _select_method_of_payment(force=False)
 
                 # Fill reference date after method selection because D365 may clear it on row refresh.
                 ref_date_loc.click()
+                if force_manual_wipe_before_fill:
+                    try:
+                        ref_date_loc.press("Control+A")
+                        ref_date_loc.press("Backspace")
+                    except Exception:
+                        pass
                 ref_date_loc.press_sequentially(ref_date, delay=200)
                 # Guard: if value got cleared, set it again.
                 try:
@@ -675,7 +861,13 @@ def test_final8(records=None):
 
                 # Payment reference must be filled last.
                 pay_ref_loc.click()
-                pay_ref_loc.press_sequentially(pay_ref, delay=200)
+                if force_manual_wipe_before_fill:
+                    try:
+                        pay_ref_loc.press("Control+A")
+                        pay_ref_loc.press("Backspace")
+                    except Exception:
+                        pass
+                pay_ref_loc.press_sequentially(pay_ref, delay=100)
 
                 # D365 may auto-reset Value date during other field interactions.
                 # Re-apply it immediately before Save and verify.
@@ -696,124 +888,568 @@ def test_final8(records=None):
                 # As requested: after Value date re-apply, fill Method of payment again, then Save.
                 _select_method_of_payment(force=True)
 
+                # Rare D365 issue: Payment reference may get cleared after value/method re-apply.
+                # Guard before Save: if empty, refill Payment reference and re-apply method once.
+                try:
+                    current_pay_ref = (pay_ref_loc.input_value() or "").strip()
+                except Exception:
+                    current_pay_ref = ""
+
+                if not current_pay_ref:
+                    print("Payment reference is empty before Save. Refilling and reapplying method.")
+                    try:
+                        pay_ref_loc.click()
+                        pay_ref_loc.press("Control+A")
+                        pay_ref_loc.press("Backspace")
+                        pay_ref_loc.press_sequentially(pay_ref, delay=120)
+                    except PlaywrightError as e:
+                        print(f"Warning: Could not refill Payment reference '{pay_ref}': {e}")
+                    _select_method_of_payment(force=True)
+
+                    # Second check after refill + method reapply.
+                    try:
+                        current_pay_ref = (pay_ref_loc.input_value() or "").strip()
+                    except Exception:
+                        current_pay_ref = ""
+
+                    if not current_pay_ref:
+                        is_last_record = idx == len(records) - 1
+                        if is_last_record:
+                            print("Payment reference is still empty on final record. Showing info-only prompt.")
+                            page.evaluate("""
+                                () => {
+                                    window.automationFinalDuplicateSaveClicked = false;
+
+                                    const oldInfo = document.getElementById('automation-final-duplicate-info');
+                                    if (oldInfo) oldInfo.remove();
+
+                                    if (window.__automationFinalDuplicateSaveHandler) {
+                                        document.removeEventListener('click', window.__automationFinalDuplicateSaveHandler, true);
+                                    }
+
+                                    const wrap = document.createElement('div');
+                                    wrap.id = 'automation-final-duplicate-info';
+                                    Object.assign(wrap.style, {
+                                        position: 'fixed',
+                                        top: '150px',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        zIndex: '2147483647',
+                                        width: 'min(760px, calc(100vw - 24px))',
+                                        boxSizing: 'border-box',
+                                        padding: '14px',
+                                        background: 'rgba(255,255,255,0.97)',
+                                        border: '1px solid rgba(17,24,39,0.16)',
+                                        borderRadius: '14px',
+                                        boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                                        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                                        color: '#0f172a'
+                                    });
+
+                                    const msg = document.createElement('div');
+                                    msg.textContent = 'Last record may already be posted. Please recheck. If needed, delete the row and click Save and Post.';
+                                    Object.assign(msg.style, {
+                                        fontSize: '14px',
+                                        fontWeight: '700',
+                                        lineHeight: '1.35'
+                                    });
+                                    wrap.appendChild(msg);
+                                    document.body.appendChild(wrap);
+
+                                    window.__automationFinalDuplicateSaveHandler = function finalDuplicateSaveHandler(e) {
+                                        const el = e.target;
+                                        const txt = (el && (el.innerText || el.textContent)) ? (el.innerText || el.textContent).trim() : '';
+                                        const btn = el && el.closest ? el.closest('button') : null;
+                                        const btnTxt = (btn && (btn.innerText || btn.textContent))
+                                            ? (btn.innerText || btn.textContent).trim()
+                                            : '';
+                                        if (txt === 'Save' || btnTxt === 'Save') {
+                                            window.automationFinalDuplicateSaveClicked = true;
+                                        }
+                                    };
+                                    document.addEventListener('click', window.__automationFinalDuplicateSaveHandler, true);
+                                }
+                            """)
+                            page.wait_for_function("window.automationFinalDuplicateSaveClicked === true", timeout=0)
+                            page.evaluate("""
+                                () => {
+                                    const info = document.getElementById('automation-final-duplicate-info');
+                                    if (info) info.remove();
+                                    if (window.__automationFinalDuplicateSaveHandler) {
+                                        document.removeEventListener('click', window.__automationFinalDuplicateSaveHandler, true);
+                                        window.__automationFinalDuplicateSaveHandler = null;
+                                    }
+                                }
+                            """)
+                            manual_save_done = True
+                            continue
+                        else:
+                            print("Payment reference is still empty. Showing already-posted decision dialog.")
+                        page.evaluate("""
+                            () => {
+                                window.automationAlreadyPostedDecision = null;
+                                const oldDlg = document.getElementById('automation-already-posted-gate');
+                                if (oldDlg) oldDlg.remove();
+
+                                const wrap = document.createElement('div');
+                                wrap.id = 'automation-already-posted-gate';
+                                Object.assign(wrap.style, {
+                                    position: 'fixed',
+                                    top: '150px',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    zIndex: '2147483647',
+                                    width: 'min(720px, calc(100vw - 24px))',
+                                    boxSizing: 'border-box',
+                                    padding: '14px',
+                                    background: 'rgba(255,255,255,0.97)',
+                                    border: '1px solid rgba(17,24,39,0.16)',
+                                    borderRadius: '14px',
+                                    boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                                    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                                    color: '#0f172a'
+                                });
+
+                                const msg = document.createElement('div');
+                                msg.textContent = 'Current record is already posted. Please Click Continue for next Iteration';
+                                Object.assign(msg.style, {
+                                    fontSize: '14px',
+                                    fontWeight: '700',
+                                    lineHeight: '1.35'
+                                });
+                                wrap.appendChild(msg);
+
+                                const actions = document.createElement('div');
+                                Object.assign(actions.style, {
+                                    display: 'flex',
+                                    justifyContent: 'flex-end',
+                                    gap: '10px',
+                                    marginTop: '12px'
+                                });
+
+                                const continueBtn = document.createElement('button');
+                                continueBtn.type = 'button';
+                                continueBtn.textContent = 'Continue';
+                                Object.assign(continueBtn.style, {
+                                    padding: '9px 14px',
+                                    borderRadius: '12px',
+                                    border: '0',
+                                    background: '#16a34a',
+                                    color: '#fff',
+                                    fontWeight: '800',
+                                    fontSize: '13px',
+                                    cursor: 'pointer'
+                                });
+                                continueBtn.onclick = () => {
+                                    window.automationAlreadyPostedDecision = 'continue';
+                                    wrap.remove();
+                                };
+
+                                const closeBtn = document.createElement('button');
+                                closeBtn.type = 'button';
+                                closeBtn.textContent = 'Close Window';
+                                Object.assign(closeBtn.style, {
+                                    padding: '9px 14px',
+                                    borderRadius: '12px',
+                                    border: '0',
+                                    background: '#dc2626',
+                                    color: '#fff',
+                                    fontWeight: '800',
+                                    fontSize: '13px',
+                                    cursor: 'pointer'
+                                });
+                                closeBtn.onclick = () => {
+                                    window.automationAlreadyPostedDecision = 'close';
+                                    wrap.remove();
+                                };
+
+                                actions.appendChild(continueBtn);
+                                actions.appendChild(closeBtn);
+                                wrap.appendChild(actions);
+                                document.body.appendChild(wrap);
+                            }
+                        """)
+                        page.wait_for_function("window.automationAlreadyPostedDecision !== null", timeout=0)
+                        decision = page.evaluate("window.automationAlreadyPostedDecision")
+                        if decision == "close":
+                            print("User chose Close Window on already-posted dialog. Exiting automation.")
+                            return
+                        print(f"[{time.time():.3f}] Continue decision received; scheduling same-row reuse.")
+                        iterated_records.append(record)
+                        reuse_same_row_next = True
+                        same_row_precleared = False
+                        continue
+
+                iterated_records.append(record)
+                print(f"Prepared record {idx + 1}/{len(records)}. Save/Post will run after all rows.")
+
+            if not iterated_records:
+                print("No records prepared; skipping Save/Post/PATCH flow.")
+                return
+
+            if manual_save_done:
+                print("Manual Save already completed after final duplicate notice. Skipping automatic Save click.")
+            else:
                 page.get_by_role("button", name=" Save").click()
                 print("Saved. Waiting for user to click Post...")
 
-                page.evaluate("""
+            page.evaluate("""
+                () => {
                     window.postClicked = false;
 
+                    // Remove old notice if exists
                     const oldNotice = document.getElementById('automation-post-notice');
                     if (oldNotice) oldNotice.remove();
+
+                    // Create notice container
                     const notice = document.createElement('div');
                     notice.id = 'automation-post-notice';
-                    notice.textContent = 'Saved. Please click Post.';
+                    notice.setAttribute('role', 'status');
+                    notice.setAttribute('aria-live', 'polite');
+
+                    // Inner layout (icon + text + close)
+                    notice.innerHTML = `
+                      <div style="display:flex; align-items:flex-start; gap:10px;">
+                        <div style="
+                          width:28px; height:28px;
+                          display:grid; place-items:center;
+                          border-radius:8px;
+                          background: rgba(255,255,255,0.18);
+                          flex: 0 0 auto;
+                          font-size: 16px;
+                          line-height: 1;
+                        ">ℹ️</div>
+
+                        <div style="min-width:0;">
+                          <div style="font-weight:800; font-size:14px; line-height:1.2;">
+                            Changes saved
+                          </div>
+                          <div style="font-weight:600; font-size:13px; line-height:1.35; opacity:0.95; margin-top:4px;">
+                            Please review all fields, then click <span style="font-weight:900;">Post</span>.
+                          </div>
+                        </div>
+
+                        <button id="automation-post-close" type="button" aria-label="Dismiss" title="Dismiss" style="
+                          margin-left:auto;
+                          width:30px; height:30px;
+                          display:grid; place-items:center;
+                          border:0;
+                          border-radius:10px;
+                          background: rgba(255,255,255,0.16);
+                          color:#fff;
+                          cursor:pointer;
+                          font-size:16px;
+                          line-height:1;
+                          flex: 0 0 auto;
+                          transition: transform .12s ease, background .12s ease;
+                        ">✕</button>
+                      </div>
+                    `;
+
+                    // Notice styling (production ready)
                     Object.assign(notice.style, {
                         position: 'fixed',
-                        top: '16px',
-                        left: '16px',
+                        top: '150px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
                         zIndex: '2147483647',
-                        padding: '10px 14px',
-                        background: '#0b5fff',
+
+                        width: 'min(720px, calc(100vw - 24px))',
+                        boxSizing: 'border-box',
+                        padding: '12px 14px',
+
+                        background: 'rgba(11, 95, 255, 0.92)',
                         color: '#fff',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        fontWeight: '600',
-                        boxShadow: '0 6px 18px rgba(0,0,0,0.25)'
+                        borderRadius: '14px',
+                        border: '1px solid rgba(255,255,255,0.18)',
+
+                        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                        boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)'
                     });
+
+                    // Subtle appear animation
+                    notice.animate(
+                      [
+                        { transform: 'translateX(-50%) translateY(-6px)', opacity: 0 },
+                        { transform: 'translateX(-50%) translateY(0px)', opacity: 1 }
+                      ],
+                      { duration: 180, easing: 'ease-out', fill: 'forwards' }
+                    );
+
+                    // Close button behavior
+                    const closeBtn = notice.querySelector('#automation-post-close');
+                    if (closeBtn) {
+                      closeBtn.addEventListener('mouseenter', () => {
+                        closeBtn.style.background = 'rgba(255,255,255,0.24)';
+                        closeBtn.style.transform = 'scale(1.05)';
+                      });
+                      closeBtn.addEventListener('mouseleave', () => {
+                        closeBtn.style.background = 'rgba(255,255,255,0.16)';
+                        closeBtn.style.transform = 'scale(1)';
+                      });
+                      closeBtn.addEventListener('click', () => notice.remove());
+                    }
+
                     document.body.appendChild(notice);
 
+                    // Keep your existing Post click handler (with cleanup)
                     if (window.__postHandler) {
                         document.removeEventListener('click', window.__postHandler, true);
                     }
+
                     window.__postHandler = function postHandler(e) {
                         const el = e.target;
-                        const txt = el.innerText || el.textContent;
+                        const txt = (el && (el.innerText || el.textContent)) ? (el.innerText || el.textContent) : '';
+
+                        // Direct "Post" element text
                         if (txt && txt.trim() === 'Post') {
                             window.postClicked = true;
                             const n = document.getElementById('automation-post-notice');
                             if (n) n.remove();
                         }
-                        const btn = el.closest('button');
+
+                        // Button containing "Post"
+                        const btn = el && el.closest ? el.closest('button') : null;
                         if (btn && btn.innerText && btn.innerText.trim() === 'Post') {
                             window.postClicked = true;
                             const n = document.getElementById('automation-post-notice');
                             if (n) n.remove();
                         }
                     };
+
                     document.addEventListener('click', window.__postHandler, true);
-                """)
+                }
+            """)
 
-                # Wait without timeout until user clicks Post.
-                page.wait_for_function("window.postClicked === true", timeout=0)
+            # Wait without timeout until user clicks Post.
+            page.wait_for_function("window.postClicked === true", timeout=0)
+            print("User clicked Post. Waiting for continue confirmation...")
 
-                print(f"User clicked Post for record {idx + 1}. Proceeding...")
-                processed_records.append(record)
+            # User gate after Post:
+            # if posting did not happen, user can fix and then continue explicitly.
+            page.evaluate("""
+                () => {
+                  window.automationPostContinueClicked = false;
 
-                # User gate before moving to next record.
-                page.evaluate("""
-                    () => {
-                        window.automationProceedDecision = null;
-                        const oldGate = document.getElementById('automation-proceed-gate');
-                        if (oldGate) oldGate.remove();
-                        const wrap = document.createElement('div');
-                        wrap.id = 'automation-proceed-gate';
-                        Object.assign(wrap.style, {
-                            position: 'fixed',
-                            top: '60px',
-                            right: '16px',
-                            zIndex: '2147483647',
-                            padding: '10px',
-                            background: '#ffffff',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '8px',
-                            boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
-                            fontFamily: 'Arial, sans-serif',
-                            minWidth: '220px'
-                        });
-                        const text = document.createElement('div');
-                        text.textContent = 'Posted. Proceed to next?';
-                        text.style.marginBottom = '8px';
-                        text.style.fontSize = '13px';
-                        wrap.appendChild(text);
-                        const p = document.createElement('button');
-                        p.textContent = 'Proceed';
-                        Object.assign(p.style, {
-                            marginRight: '8px',
-                            padding: '6px 10px',
-                            background: '#16a34a',
-                            color: '#fff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer'
-                        });
-                        p.onclick = () => { window.automationProceedDecision = 'proceed'; wrap.remove(); };
-                        const c = document.createElement('button');
-                        c.textContent = 'Cancel';
-                        Object.assign(c.style, {
-                            padding: '6px 10px',
-                            background: '#ef4444',
-                            color: '#fff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer'
-                        });
-                        c.onclick = () => { window.automationProceedDecision = 'cancel'; wrap.remove(); };
-                        wrap.appendChild(p);
-                        wrap.appendChild(c);
-                        document.body.appendChild(wrap);
-                    }
-                """)
-                page.wait_for_function("window.automationProceedDecision !== null", timeout=0)
-                decision = page.evaluate("window.automationProceedDecision")
-                if decision == "cancel":
-                    print("User chose Cancel. Stopping further records.")
-                    break
-                time.sleep(1)
+                  const oldGate = document.getElementById('automation-post-continue-gate');
+                  if (oldGate) oldGate.remove();
+
+                  const wrap = document.createElement('div');
+                  wrap.id = 'automation-post-continue-gate';
+                  wrap.setAttribute('role', 'dialog');
+                  wrap.setAttribute('aria-modal', 'false');
+
+                  // Card style
+                  Object.assign(wrap.style, {
+                    position: 'fixed',
+                    top: '150px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: '2147483647',
+
+                    width: 'min(720px, calc(100vw - 24px))',
+                    boxSizing: 'border-box',
+                    padding: '14px',
+
+                    background: 'rgba(255,255,255,0.96)',
+                    border: '1px solid rgba(17,24,39,0.12)',
+                    borderRadius: '14px',
+                    boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                    backdropFilter: 'blur(6px)',
+                    WebkitBackdropFilter: 'blur(6px)',
+
+                    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                    color: '#0f172a'
+                  });
+
+                  // Layout row
+                  const row = document.createElement('div');
+                  Object.assign(row.style, {
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '12px'
+                  });
+
+                  // Icon
+                  const icon = document.createElement('div');
+                  icon.textContent = '✅';
+                  Object.assign(icon.style, {
+                    width: '34px',
+                    height: '34px',
+                    display: 'grid',
+                    placeItems: 'center',
+                    borderRadius: '10px',
+                    background: 'rgba(22,163,74,0.10)',
+                    flex: '0 0 auto',
+                    fontSize: '18px',
+                    lineHeight: '1'
+                  });
+
+                  // Content
+                  const content = document.createElement('div');
+                  content.style.minWidth = '0';
+
+                  const title = document.createElement('div');
+                  title.textContent = 'Confirm posting is successful';
+                  Object.assign(title.style, {
+                    fontWeight: '800',
+                    fontSize: '14px',
+                    lineHeight: '1.2',
+                    marginTop: '2px'
+                  });
+
+                  const text = document.createElement('div');
+                  text.textContent = 'Please ensure posting is successful. Click Continue only after successful posting.';
+                  Object.assign(text.style, {
+                    marginTop: '6px',
+                    fontSize: '13px',
+                    lineHeight: '1.4',
+                    color: 'rgba(15, 23, 42, 0.88)'
+                  });
+
+                  content.appendChild(title);
+                  content.appendChild(text);
+
+                  // Close button (optional)
+                  const close = document.createElement('button');
+                  close.type = 'button';
+                  close.textContent = '❌';
+                  close.setAttribute('aria-label', 'Dismiss');
+                  close.title = 'Dismiss';
+                  Object.assign(close.style, {
+                    marginLeft: 'auto',
+                    width: '34px',
+                    height: '34px',
+                    display: 'grid',
+                    placeItems: 'center',
+                    border: '0',
+                    borderRadius: '12px',
+                    background: 'rgba(15,23,42,0.06)',
+                    cursor: 'pointer',
+                    lineHeight: '1',
+                    transition: 'transform .12s ease, background .12s ease'
+                  });
+                  close.addEventListener('mouseenter', () => {
+                    close.style.background = 'rgba(15,23,42,0.10)';
+                    close.style.transform = 'scale(1.04)';
+                  });
+                  close.addEventListener('mouseleave', () => {
+                    close.style.background = 'rgba(15,23,42,0.06)';
+                    close.style.transform = 'scale(1)';
+                  });
+                  close.addEventListener('click', () => wrap.remove());
+
+                  row.appendChild(icon);
+                  row.appendChild(content);
+                  row.appendChild(close);
+                  wrap.appendChild(row);
+
+                  // Actions row
+                  const actions = document.createElement('div');
+                  Object.assign(actions.style, {
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    gap: '10px',
+                    marginTop: '12px'
+                  });
+
+                  // Secondary: Not yet (optional)
+                  const later = document.createElement('button');
+                  later.type = 'button';
+                  later.textContent = 'Not yet';
+                  Object.assign(later.style, {
+                    padding: '9px 12px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(15,23,42,0.14)',
+                    background: 'rgba(255,255,255,0.70)',
+                    color: '#0f172a',
+                    fontWeight: '700',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    transition: 'transform .12s ease, background .12s ease, box-shadow .12s ease'
+                  });
+                  later.addEventListener('mouseenter', () => {
+                    later.style.background = 'rgba(255,255,255,0.95)';
+                    later.style.boxShadow = '0 10px 26px rgba(0,0,0,0.10)';
+                    later.style.transform = 'translateY(-1px)';
+                  });
+                  later.addEventListener('mouseleave', () => {
+                    later.style.background = 'rgba(255,255,255,0.70)';
+                    later.style.boxShadow = 'none';
+                    later.style.transform = 'translateY(0)';
+                  });
+                  later.addEventListener('click', () => wrap.remove());
+
+                  // Primary: Continue
+                  const p = document.createElement('button');
+                  p.type = 'button';
+                  p.textContent = 'Continue';
+                  Object.assign(p.style, {
+                    padding: '9px 14px',
+                    borderRadius: '12px',
+                    border: '0',
+                    background: '#16a34a',
+                    color: '#fff',
+                    fontWeight: '800',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    boxShadow: '0 10px 26px rgba(22,163,74,0.28)',
+                    transition: 'transform .12s ease, filter .12s ease, box-shadow .12s ease',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  });
+
+                  p.addEventListener('mouseenter', () => {
+                    if (p.disabled) return;
+                    p.style.transform = 'translateY(-1px)';
+                    p.style.filter = 'brightness(1.05)';
+                    p.style.boxShadow = '0 14px 30px rgba(22,163,74,0.34)';
+                  });
+                  p.addEventListener('mouseleave', () => {
+                    if (p.disabled) return;
+                    p.style.transform = 'translateY(0)';
+                    p.style.filter = 'none';
+                    p.style.boxShadow = '0 10px 26px rgba(22,163,74,0.28)';
+                  });
+
+                  p.addEventListener('click', () => {
+                    window.automationPostContinueClicked = true;
+                    p.disabled = true;
+                    p.textContent = '⏳ Continuing...';
+                    p.style.opacity = '0.8';
+                    p.style.cursor = 'not-allowed';
+                    p.style.transform = 'translateY(0)';
+                    p.style.filter = 'none';
+                    wrap.remove();
+                  });
+
+                  actions.appendChild(later);
+                  actions.appendChild(p);
+                  wrap.appendChild(actions);
+
+                  // Subtle appear animation
+                  wrap.animate(
+                    [
+                      { transform: 'translateX(-50%) translateY(-6px)', opacity: 0 },
+                      { transform: 'translateX(-50%) translateY(0px)', opacity: 1 }
+                    ],
+                    { duration: 180, easing: 'ease-out', fill: 'forwards' }
+                  );
+
+                  document.body.appendChild(wrap);
+                }
+            """)
+            page.wait_for_function("window.automationPostContinueClicked === true", timeout=0)
+
+            processed_records = list(iterated_records)
+            print(f"Continue confirmed. Proceeding with {len(processed_records)} records for bulk patch.")
 
             print("All records processed.")
             page.evaluate("alert('All selected records have been processed.')")
             page.get_by_text("List General Payment fee Bank").click()
-            page.wait_for_timeout(5000)
 
             # ---- Extract all voucher IDs ----
             voucher_values = []
@@ -839,6 +1475,12 @@ def test_final8(records=None):
                     break
                 page.wait_for_timeout(2000)
             print(voucher_values)
+            if len(voucher_values) != len(processed_records):
+                print(
+                    "Warning: Voucher count does not match processed record count "
+                    f"({len(voucher_values)} vs {len(processed_records)}). "
+                    "Patching will use minimum count by order."
+                )
             ok, patch_msg = _bulk_update_receipts(processed_records, voucher_values)
             print(f"bulkUpdateReceipt status: {'OK' if ok else 'SKIP/FAIL'}")
             print(patch_msg)
@@ -847,36 +1489,69 @@ def test_final8(records=None):
             page.evaluate("""
                 () => {
                     window.automationCompleteClicked = false;
+
                     const oldBtn = document.getElementById('automation-complete-btn');
                     if (oldBtn) oldBtn.remove();
+
                     const btn = document.createElement('button');
                     btn.id = 'automation-complete-btn';
-                    btn.textContent = 'Complete';
+
+                    // Text with X mark before
+                    btn.textContent = '❌ Click to Close Window';
+
                     Object.assign(btn.style, {
                         position: 'fixed',
-                        top: '16px',
-                        right: '16px',
+                        top: '150px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
                         zIndex: '2147483647',
-                        padding: '10px 14px',
-                        background: '#16a34a',
+
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+
+                        padding: '10px 16px',
+                        background: '#dc2626',
                         color: '#fff',
                         border: 'none',
-                        borderRadius: '8px',
+                        borderRadius: '10px',
                         fontSize: '14px',
                         fontWeight: '700',
                         cursor: 'pointer',
-                        boxShadow: '0 6px 18px rgba(0,0,0,0.25)'
+                        boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+                        userSelect: 'none'
                     });
+
+                    // Hover effect
+                    btn.addEventListener('mouseenter', () => {
+                        if (btn.disabled) return;
+                        btn.style.transform = 'translateX(-50%) scale(1.03)';
+                        btn.style.boxShadow = '0 10px 26px rgba(0,0,0,0.30)';
+                        btn.style.filter = 'brightness(1.05)';
+                    });
+
+                    btn.addEventListener('mouseleave', () => {
+                        if (btn.disabled) return;
+                        btn.style.transform = 'translateX(-50%) scale(1)';
+                        btn.style.boxShadow = '0 8px 20px rgba(0,0,0,0.25)';
+                        btn.style.filter = 'none';
+                    });
+
                     btn.addEventListener('click', () => {
                         window.automationCompleteClicked = true;
-                        btn.textContent = 'Completed';
+                        btn.textContent = '⏳ Closing...';
                         btn.disabled = true;
                         btn.style.opacity = '0.75';
+                        btn.style.cursor = 'not-allowed';
+                        btn.style.transform = 'translateX(-50%) scale(1)';
+                        btn.style.filter = 'grayscale(0.1)';
                     });
+
                     document.body.appendChild(btn);
                 }
             """)
-            print("All steps done. Waiting for user to click Complete...")
+            print("All steps done. Waiting for user to click close button...")
             page.wait_for_function("window.automationCompleteClicked === true", timeout=0)
 
             _persist_storage_state(context)

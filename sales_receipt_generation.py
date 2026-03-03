@@ -454,21 +454,6 @@ class Application(tk.Tk):
         top_actions.pack(side="right")
         tk.Button(
             top_actions,
-            text="Open Config",
-            command=self._open_config_file,
-            cursor="hand2",
-            relief="flat",
-            bg="#5b7bd8",
-            fg="white",
-            activebackground="#4a6bc8",
-            activeforeground="white",
-            font=("Segoe UI", 10, "bold"),
-            padx=14,
-            pady=7,
-        ).pack(side="right", padx=(0, 8))
-
-        tk.Button(
-            top_actions,
             text="Login",
             command=self._run_login_automation,
             cursor="hand2",
@@ -794,7 +779,7 @@ class Application(tk.Tk):
                 row_frame.pack(fill="x")
                 for col_idx, (key, _label, weight) in enumerate(col_defs):
                     row_frame.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
-                    if key == "account":
+                    if key in {"account", "payment_reference"}:
                         entry = tk.Entry(
                             row_frame,
                             textvariable=row_widgets[key],
@@ -831,8 +816,18 @@ class Application(tk.Tk):
         pass
 
     def _toggle_batch_selection(self, batch_id, batch_rows, radio_btn, card_ref, ticket_label):
-        selected = not self.batch_selection_state.get(str(batch_id), False)
-        self.batch_selection_state[str(batch_id)] = selected
+        batch_key = str(batch_id)
+        selected = not self.batch_selection_state.get(batch_key, False)
+        self.batch_selection_state[batch_key] = selected
+
+        # Non-blocking warning when multiple batches are selected.
+        selected_count = sum(1 for val in self.batch_selection_state.values() if val)
+        if selected and selected_count > 1:
+            messagebox.showwarning(
+                "Multiple Batches Selected",
+                "More than one batch is selected. Automation will process all selected batches together.",
+            )
+
         self._style_batch_radio_button(radio_btn, selected)
         card_ref.configure(
             highlightbackground=self.colors["card_selected_border"] if selected else self.colors["card_border"],
