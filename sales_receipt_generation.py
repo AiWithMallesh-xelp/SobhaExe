@@ -370,13 +370,12 @@ class Application(tk.Tk):
         self.row_vars = []
 
         # Initialize variables
-        self.selected_batch_var = tk.StringVar(value="ALL")
+        self.selected_batch_var = tk.StringVar(value="")
         self.match_filter_var = tk.StringVar(value="ALL")
         self.all_rows = []
-        self.batch_collapsed_state = {}
-        self.row_selection_state = {}
-        self.batch_selection_state = {}
+        self.batch_groups = []
         self.current_batch_count = 0
+        self.current_sub_batch_count = 0
 
         # Initialize widgets to None to avoid AttributeErrors
         self.cards_frame: Optional[tk.Frame] = None
@@ -443,7 +442,7 @@ class Application(tk.Tk):
 
         self.section_count_label = tk.Label(
             toolbar,
-            text="Sales Acc Receipt Gen (0 batches)",
+            text="Sales Acc Receipt Gen (0 batches / 0 sub-batches)",
             bg=self.colors["frame_bg"],
             fg=self.colors["title"],
             font=("Segoe UI", 10),
@@ -533,7 +532,7 @@ class Application(tk.Tk):
 
         self.row_count_label = tk.Label(
             footer,
-            text="0 batches",
+            text="0 batches | 0 sub-batches",
             font=("Segoe UI", 9),
             fg=self.colors["muted"],
             bg=self.colors["frame_bg"],
@@ -611,6 +610,7 @@ class Application(tk.Tk):
         return "|".join(
             [
                 str(row.get("batch_id", "")).strip(),
+                str(row.get("sub_batch_id", "")).strip(),
                 str(row.get("value_date", "")).strip(),
                 str(row.get("account", "")).strip(),
                 str(row.get("credit", "")).strip(),
@@ -618,10 +618,119 @@ class Application(tk.Tk):
             ]
         )
 
+    def _sanitize_amount(self, value: str) -> str:
+        if value is None:
+            return ""
+        raw = str(value).replace("₹", "").replace(" ", "").strip()
+        return "".join(ch for ch in raw if ch.isdigit() or ch in {",", ".", "-"})
+
+    def _extract_records(self, payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return data
+            for key in ("data", "result", "rows", "records"):
+                if isinstance(payload.get(key), list):
+                    return payload[key]
+        return []
+
+    def _map_transaction(self, txn: dict, batch_id: str = "", sub_batch_id: str = "") -> dict:
+        mapped_batch_id = str(txn.get("batch_id", "")).strip() or batch_id or "UNASSIGNED"
+        mapped_sub_batch_id = str(txn.get("sub_batch_id", "")).strip() or sub_batch_id or mapped_batch_id
+        account_date = str(txn.get("account_date", "")).strip()
+        return {
+            "uuid": str(txn.get("uuid", "")).strip(),
+            "batch_id": mapped_batch_id,
+            "sub_batch_id": mapped_sub_batch_id,
+            "value_date": account_date,
+            "account": str(txn.get("account_number", "")).strip(),
+            "credit": self._sanitize_amount(txn.get("transaction_amount", "")),
+            "offset_account": str(txn.get("offset_account", "")).strip(),
+            "method_of_payment": str(txn.get("mode_of_transaction", "")).strip(),
+            "reference_date": account_date,
+            "payment_reference": str(txn.get("transaction_description", "")).strip(),
+        }
+
+    def _extract_batch_groups(self, payload):
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, dict) and isinstance(data.get("batches"), list):
+                batch_groups = []
+                for batch_index, batch in enumerate(data.get("batches", []), start=1):
+                    batch_id = str(batch.get("batch_id", "")).strip() or f"UNASSIGNED_{batch_index}"
+                    sub_batch_groups = []
+                    for sub_index, sub_batch in enumerate(batch.get("sub_batches", []), start=1):
+                        sub_batch_id = str(sub_batch.get("sub_batch_id", "")).strip() or f"{batch_id}_{sub_index}"
+                        transactions = [
+                            self._map_transaction(txn, batch_id, sub_batch_id)
+                            for txn in sub_batch.get("transactions", [])
+                        ]
+                        sub_batch_groups.append(
+                            {
+                                "batch_id": batch_id,
+                                "sub_batch_id": sub_batch_id,
+                                "transactions": transactions,
+                            }
+                        )
+                    batch_groups.append(
+                        {
+                            "batch_id": batch_id,
+                            "sub_batches": sub_batch_groups,
+                        }
+                    )
+                return batch_groups
+
+        grouped = {}
+        for txn in self._extract_records(payload):
+            mapped = self._map_transaction(txn)
+            batch_id = mapped["batch_id"]
+            sub_batch_id = mapped["sub_batch_id"]
+            batch_group = grouped.setdefault(batch_id, {})
+            batch_group.setdefault(sub_batch_id, []).append(mapped)
+
+        batch_groups = []
+        for batch_id, sub_batches in grouped.items():
+            batch_groups.append(
+                {
+                    "batch_id": batch_id,
+                    "sub_batches": [
+                        {
+                            "batch_id": batch_id,
+                            "sub_batch_id": sub_batch_id,
+                            "transactions": transactions,
+                        }
+                        for sub_batch_id, transactions in sub_batches.items()
+                    ],
+                }
+            )
+        return batch_groups
+
+    def _batch_transaction_count(self, batch_info: dict) -> int:
+        return sum(len(sub_batch.get("transactions", [])) for sub_batch in batch_info.get("sub_batches", []))
+
+    def _selected_batch_group(self):
+        selected_batch_id = self.selected_batch_var.get().strip()
+        for batch_info in self.batch_groups:
+            if str(batch_info.get("batch_id", "")).strip() == selected_batch_id:
+                return batch_info
+        return None
+
     def _refresh_match_counts(self):
-        total = len({str(row.get("batch_id", "")).strip() or "UNASSIGNED" for row in self.all_rows})
+        batch_count = len(self.batch_groups)
+        sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in self.batch_groups)
         if self.section_count_label:
-            self.section_count_label.configure(text=f"Sales Acc Receipt Gen ({total} batches)")
+            self.section_count_label.configure(
+                text=f"Sales Acc Receipt Gen ({batch_count} batches / {sub_batch_count} sub-batches)"
+            )
+
+    def _status_text(self) -> str:
+        selected_batch_id = self.selected_batch_var.get().strip()
+        base = f"Showing {self.current_batch_count} batches / {self.current_sub_batch_count} sub-batches"
+        if selected_batch_id:
+            return f"{base} | Selected batch: {selected_batch_id}"
+        return f"{base} | Selected batch: None"
 
     def _sync_current_edits(self):
         for row_widgets in self.row_vars:
@@ -631,8 +740,10 @@ class Application(tk.Tk):
             for key in KEY_MAP[1:]:
                 if key in row_widgets:
                     data_ref[key] = row_widgets[key].get()
+            if "sub_batch_id" in row_widgets:
+                data_ref["sub_batch_id"] = row_widgets["sub_batch_id"].get()
 
-    def _render_rows(self, data):
+    def _render_rows(self, batch_groups):
         if not self.cards_frame:
             return
 
@@ -640,13 +751,10 @@ class Application(tk.Tk):
             widget.destroy()
         self.row_vars.clear()
 
-        grouped = {}
-        for row in data:
-            batch_id = str(row.get("batch_id", "")).strip() or "UNASSIGNED"
-            grouped.setdefault(batch_id, []).append(row)
-        self.current_batch_count = len(grouped)
+        self.current_batch_count = len(batch_groups)
+        self.current_sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in batch_groups)
 
-        if not grouped:
+        if not batch_groups:
             empty = tk.Label(
                 self.cards_frame,
                 text="No records for current filter",
@@ -657,7 +765,7 @@ class Application(tk.Tk):
             )
             empty.pack(fill="x")
             if self.row_count_label:
-                self.row_count_label.config(text="0 batches")
+                self.row_count_label.config(text="0 batches | 0 sub-batches")
             return
 
         col_defs = [
@@ -670,8 +778,13 @@ class Application(tk.Tk):
             ("payment_reference", "Payment Reference", 3),
         ]
 
-        for batch_id, batch_rows in grouped.items():
-            batch_selected = self.batch_selection_state.get(batch_id, False)
+        selected_batch_id = self.selected_batch_var.get().strip()
+        for batch_info in batch_groups:
+            batch_id = str(batch_info.get("batch_id", "")).strip() or "UNASSIGNED"
+            batch_selected = batch_id == selected_batch_id
+            sub_batches = batch_info.get("sub_batches", [])
+            total_transactions = self._batch_transaction_count(batch_info)
+
             card = tk.Frame(
                 self.cards_frame,
                 bg=self.colors["card_bg"],
@@ -683,21 +796,7 @@ class Application(tk.Tk):
             )
             card.pack(fill="x", pady=(0, 12))
 
-            batch_row_vars = []
-            for record in batch_rows:
-                row_key = self._row_key(record)
-                row_widgets = {
-                    "data": record,
-                    "row_key": row_key,
-                    "uuid": tk.StringVar(value=str(record.get("uuid", ""))),
-                    "batch_id": tk.StringVar(value=str(record.get("batch_id", ""))),
-                }
-                for key in KEY_MAP[2:]:
-                    row_widgets[key] = tk.StringVar(value=str(record.get(key, "")))
-                self.row_vars.append(row_widgets)
-                batch_row_vars.append(row_widgets)
-
-            header = tk.Frame(card, bg=self.colors["card_header_bg"], height=34)
+            header = tk.Frame(card, bg=self.colors["card_header_bg"], height=42)
             header.pack(fill="x")
             header.pack_propagate(False)
 
@@ -714,6 +813,7 @@ class Application(tk.Tk):
                 pady=1,
                 borderwidth=1,
                 highlightthickness=0,
+                command=lambda bid=batch_id: self._toggle_batch_selection(bid),
             )
             radio_btn.pack(side="left", padx=(0, 8))
             self._style_batch_radio_button(radio_btn, batch_selected)
@@ -728,115 +828,126 @@ class Application(tk.Tk):
                 font=("Segoe UI", 9, "bold"),
                 anchor="w",
             ).pack(anchor="w")
+            tk.Label(
+                title_wrap,
+                text=f"{len(sub_batches)} sub-batches",
+                bg=self.colors["card_header_bg"],
+                fg=self.colors["muted"],
+                font=("Segoe UI", 8),
+                anchor="w",
+            ).pack(anchor="w")
 
-            total_transactions = len(batch_row_vars)
-            ticket_label = tk.Label(
+            tk.Label(
                 header,
-                text=f"No.Of Transactions: {total_transactions}",
+                text=f"{total_transactions} transactions",
                 bg=self.colors["card_header_bg"],
                 fg=self.colors["text"],
                 font=("Segoe UI", 10, "bold"),
-            )
-            ticket_label.pack(side="right", padx=(0, 4))
-            radio_btn.configure(
-                command=lambda bid=batch_id, rows=batch_row_vars, btn=radio_btn, card_ref=card, tlabel=ticket_label: self._toggle_batch_selection(
-                    bid, rows, btn, card_ref, tlabel
+            ).pack(side="right", padx=(0, 4))
+
+            for sub_batch in sub_batches:
+                sub_batch_id = str(sub_batch.get("sub_batch_id", "")).strip() or batch_id
+                sub_rows = sub_batch.get("transactions", [])
+
+                sub_card = tk.Frame(
+                    card,
+                    bg=self.colors["table_shell_bg"],
+                    highlightbackground=self.colors["table_border"],
+                    highlightthickness=1,
+                    bd=0,
+                    padx=8,
+                    pady=8,
                 )
-            )
+                sub_card.pack(fill="x", pady=(8, 2))
 
-            table_shell = tk.Frame(
-                card,
-                bg=self.colors["table_shell_bg"],
-                highlightbackground=self.colors["table_border"],
-                highlightthickness=1,
-                bd=0,
-            )
-            table_shell.pack(fill="x", pady=(8, 2))
+                sub_header = tk.Frame(sub_card, bg=self.colors["table_header_bg"], height=34)
+                sub_header.pack(fill="x")
+                sub_header.pack_propagate(False)
 
-            table = tk.Frame(
-                table_shell,
-                bg=self.colors["table_shell_bg"],
-                bd=0,
-            )
-            table.pack(fill="x", padx=6, pady=6)
-
-            header_row = tk.Frame(table, bg=self.colors["table_header_bg"], pady=4)
-            header_row.pack(fill="x")
-            for col_idx, (_key, label, weight) in enumerate(col_defs):
-                header_row.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
+                sub_title = tk.Frame(sub_header, bg=self.colors["table_header_bg"])
+                sub_title.pack(side="left", fill="x", expand=True, padx=(4, 0))
                 tk.Label(
-                    header_row,
-                    text=label,
+                    sub_title,
+                    text=sub_batch_id,
                     bg=self.colors["table_header_bg"],
-                    fg=self.colors["muted"],
-                    font=("Segoe UI", 8, "bold"),
+                    fg=self.colors["title"],
+                    font=("Segoe UI", 9, "bold"),
                     anchor="w",
-                ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(2, 2))
+                ).pack(anchor="w")
 
-            for idx, row_widgets in enumerate(batch_row_vars):
-                row_bg = self.colors["row_bg_even"] if idx % 2 == 0 else self.colors["row_bg_odd"]
-                row_frame = tk.Frame(table, bg=row_bg)
-                row_frame.pack(fill="x")
-                for col_idx, (key, _label, weight) in enumerate(col_defs):
-                    row_frame.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
-                    if key in {"account", "payment_reference"}:
-                        entry = tk.Entry(
-                            row_frame,
-                            textvariable=row_widgets[key],
-                            relief="flat",
-                            bd=0,
-                            highlightthickness=0,
-                            bg=row_bg,
-                            fg=self.colors["text"],
-                            insertbackground=self.colors["text"],
-                            font=("Segoe UI", 11),
-                        )
-                        entry.grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(6, 6))
-                    else:
-                        tk.Label(
-                            row_frame,
-                            textvariable=row_widgets[key],
-                            bg=row_bg,
-                            fg=self.colors["text"],
-                            font=("Segoe UI", 11),
-                            anchor="w",
-                        ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(7, 7))
+                tk.Label(
+                    sub_header,
+                    text=f"{len(sub_rows)} transactions",
+                    bg=self.colors["table_header_bg"],
+                    fg=self.colors["text"],
+                    font=("Segoe UI", 9, "bold"),
+                ).pack(side="right", padx=(0, 4))
 
-                if idx < len(batch_row_vars) - 1:
-                    sep = tk.Frame(table, height=1, bg=self.colors["row_sep"])
-                    sep.pack(fill="x")
+                table = tk.Frame(sub_card, bg=self.colors["table_shell_bg"], bd=0)
+                table.pack(fill="x", padx=4, pady=(8, 2))
 
-            self._update_batch_ticket_label(batch_row_vars, batch_selected, ticket_label)
+                header_row = tk.Frame(table, bg=self.colors["table_header_bg"], pady=4)
+                header_row.pack(fill="x")
+                for col_idx, (_key, label, weight) in enumerate(col_defs):
+                    header_row.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
+                    tk.Label(
+                        header_row,
+                        text=label,
+                        bg=self.colors["table_header_bg"],
+                        fg=self.colors["muted"],
+                        font=("Segoe UI", 8, "bold"),
+                        anchor="w",
+                    ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(2, 2))
+
+                for row_index, record in enumerate(sub_rows):
+                    row_key = self._row_key(record)
+                    row_widgets = {
+                        "data": record,
+                        "row_key": row_key,
+                        "uuid": tk.StringVar(value=str(record.get("uuid", ""))),
+                        "batch_id": tk.StringVar(value=str(record.get("batch_id", ""))),
+                        "sub_batch_id": tk.StringVar(value=str(record.get("sub_batch_id", ""))),
+                    }
+                    for key in KEY_MAP[2:]:
+                        row_widgets[key] = tk.StringVar(value=str(record.get(key, "")))
+                    self.row_vars.append(row_widgets)
+
+                    row_bg = self.colors["row_bg_even"] if row_index % 2 == 0 else self.colors["row_bg_odd"]
+                    row_frame = tk.Frame(table, bg=row_bg)
+                    row_frame.pack(fill="x")
+                    for col_idx, (key, _label, weight) in enumerate(col_defs):
+                        row_frame.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
+                        if key in {"account", "payment_reference"}:
+                            entry = tk.Entry(
+                                row_frame,
+                                textvariable=row_widgets[key],
+                                relief="flat",
+                                bd=0,
+                                highlightthickness=0,
+                                bg=row_bg,
+                                fg=self.colors["text"],
+                                insertbackground=self.colors["text"],
+                                font=("Segoe UI", 11),
+                            )
+                            entry.grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(6, 6))
+                        else:
+                            tk.Label(
+                                row_frame,
+                                textvariable=row_widgets[key],
+                                bg=row_bg,
+                                fg=self.colors["text"],
+                                font=("Segoe UI", 11),
+                                anchor="w",
+                            ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(7, 7))
+
+                    if row_index < len(sub_rows) - 1:
+                        sep = tk.Frame(table, height=1, bg=self.colors["row_sep"])
+                        sep.pack(fill="x")
 
         if self.row_count_label:
-            self.row_count_label.config(text=f"{self.current_batch_count} batches")
-
-    def _on_single_row_toggle(self, row_widgets, batch_rows, batch_check_var, ticket_label):
-        # Row-level toggles are disabled; selection is controlled at batch level only.
-        pass
-
-    def _toggle_batch_selection(self, batch_id, batch_rows, radio_btn, card_ref, ticket_label):
-        batch_key = str(batch_id)
-        selected = not self.batch_selection_state.get(batch_key, False)
-        self.batch_selection_state[batch_key] = selected
-
-        # Non-blocking warning when multiple batches are selected.
-        selected_count = sum(1 for val in self.batch_selection_state.values() if val)
-        if selected and selected_count > 1:
-            messagebox.showwarning(
-                "Multiple Batches Selected",
-                "More than one batch is selected. Automation will process all selected batches together.",
+            self.row_count_label.config(
+                text=f"{self.current_batch_count} batches | {self.current_sub_batch_count} sub-batches"
             )
-
-        self._style_batch_radio_button(radio_btn, selected)
-        card_ref.configure(
-            highlightbackground=self.colors["card_selected_border"] if selected else self.colors["card_border"],
-            highlightthickness=2 if selected else 1,
-        )
-        self._update_batch_ticket_label(batch_rows, selected, ticket_label)
-
-    def _update_batch_ticket_label(self, batch_rows, selected: bool, ticket_label):
-        ticket_label.configure(text=f"No.Of Transactions: {len(batch_rows)}")
 
     def _style_batch_radio_button(self, button: tk.Button, selected: bool):
         if selected:
@@ -864,17 +975,24 @@ class Application(tk.Tk):
                 borderwidth=1,
             )
 
-    def _confirm_automation_dialog(self, record_count: int) -> bool:
+    def _toggle_batch_selection(self, batch_id: str):
+        batch_key = str(batch_id).strip()
+        if not batch_key:
+            return
+        self.selected_batch_var.set(batch_key)
+        self._apply_filter()
+
+    def _confirm_automation_dialog(self, batch_id: str, sub_batch_count: int, transaction_count: int) -> bool:
         dlg = tk.Toplevel(self)
         dlg.title("Confirm Automation")
-        dlg.geometry("560x300")
+        dlg.geometry("620x320")
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#eef2f8")
         dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - 560) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - 300) // 2
+        x = self.winfo_rootx() + (self.winfo_width() - 620) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - 320) // 2
         dlg.geometry(f"+{x}+{y}")
 
         card = tk.Frame(
@@ -897,14 +1015,31 @@ class Application(tk.Tk):
             anchor="w",
         ).pack(fill="x", pady=(4, 8))
 
-        tk.Label(
-            card,
-            text=f"This will run automation for {record_count} selected transactions.",
-            bg="white",
-            fg=self.colors["muted"],
-            font=("Segoe UI", 11),
-            anchor="w",
-        ).pack(fill="x", pady=(0, 4))
+        summary_rows = [
+            ("Main Batch", batch_id),
+            ("Sub-Batches", str(sub_batch_count)),
+            ("Transactions", str(transaction_count)),
+        ]
+        for label, value in summary_rows:
+            row = tk.Frame(card, bg="white")
+            row.pack(fill="x", pady=(0, 6))
+            tk.Label(
+                row,
+                text=f"{label}:",
+                bg="white",
+                fg=self.colors["muted"],
+                font=("Segoe UI", 10, "bold"),
+                width=14,
+                anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                row,
+                text=value,
+                bg="white",
+                fg=self.colors["title"],
+                font=("Segoe UI", 10),
+                anchor="w",
+            ).pack(side="left")
 
         tk.Label(
             card,
@@ -913,7 +1048,7 @@ class Application(tk.Tk):
             fg=self.colors["muted"],
             font=("Segoe UI", 10),
             anchor="w",
-        ).pack(fill="x", pady=(0, 18))
+        ).pack(fill="x", pady=(10, 18))
 
         result = {"ok": False}
         btn_row = tk.Frame(card, bg="white", pady=6)
@@ -929,7 +1064,7 @@ class Application(tk.Tk):
 
         tk.Button(
             btn_row,
-            text="Confirm",
+            text="Proceed",
             command=on_confirm,
             cursor="hand2",
             relief="flat",
@@ -960,60 +1095,6 @@ class Application(tk.Tk):
         dlg.wait_window()
         return result["ok"]
 
-    def _toggle_batch_collapsed(self, batch_id: str):
-        self.batch_collapsed_state[batch_id] = not self.batch_collapsed_state.get(batch_id, False)
-        self._apply_filter()
-
-    def _set_all_cards_collapsed(self, collapsed: bool):
-        for row in self.all_rows:
-            batch_id = str(row.get("batch_id", "")).strip() or "UNASSIGNED"
-            self.batch_collapsed_state[batch_id] = collapsed
-        self._apply_filter()
-
-    def _build_batch_panel(self, parent: tk.Frame):
-        tk.Label(
-            parent,
-            text="Batches",
-            bg="#f2f4f8",
-            fg=self.colors["title"],
-            font=("Segoe UI", 11, "bold"),
-            padx=10,
-            pady=10,
-            anchor="w",
-        ).pack(fill="x")
-
-        holder = tk.Frame(parent, bg="#f2f4f8")
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        self.batch_canvas = tk.Canvas(holder, bg="#f2f4f8", highlightthickness=0, borderwidth=0)
-        scrollbar = ttk.Scrollbar(holder, orient="vertical", command=self.batch_canvas.yview)
-        self.batch_canvas.configure(yscrollcommand=scrollbar.set)
-
-        scrollbar.pack(side="right", fill="y")
-        self.batch_canvas.pack(side="left", fill="both", expand=True)
-
-        self.batch_items_frame = tk.Frame(self.batch_canvas, bg="#f2f4f8")
-        self.batch_canvas_window_id = self.batch_canvas.create_window((0, 0), window=self.batch_items_frame, anchor="nw")
-        self.batch_items_frame.bind(
-            "<Configure>",
-            lambda _e: self.batch_canvas.configure(scrollregion=self.batch_canvas.bbox("all")),
-        )
-        self.batch_canvas.bind("<Configure>", self._on_batch_canvas_configure)
-    def _sanitize_amount(self, value: str) -> str:
-        if value is None:
-            return ""
-        raw = str(value).replace("₹", "").replace(" ", "").strip()
-        return "".join(ch for ch in raw if ch.isdigit() or ch in {",", ".", "-"})
-
-    def _extract_records(self, payload):
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            for key in ("data", "result", "rows", "records"):
-                if isinstance(payload.get(key), list):
-                    return payload[key]
-        return []
-
     def _load_transactions(self):
         def worker():
             try:
@@ -1025,23 +1106,17 @@ class Application(tk.Tk):
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = resp.read().decode("utf-8")
                 payload = json.loads(raw)
-                items = self._extract_records(payload)
-                mapped = []
-                for txn in items:
-                    mapped.append(
-                        {
-                            "uuid": str(txn.get("uuid", "")).strip(),
-                            "batch_id": str(txn.get("batch_id", "")).strip(),
-                            "value_date": str(txn.get("account_date", "")).strip(),
-                            "account": str(txn.get("account_number", "")).strip(),
-                            "credit": self._sanitize_amount(txn.get("transaction_amount", "")),
-                            "offset_account": str(txn.get("offset_account", "")).strip(),
-                            "method_of_payment": str(txn.get("mode_of_transaction", "")).strip(),
-                            "reference_date": str(txn.get("account_date", "")).strip(),
-                            "payment_reference": str(txn.get("transaction_description", "")).strip(),
-                        }
-                    )
-                self.after(0, lambda data=mapped: self._apply_loaded_transactions(data))
+                batch_groups = self._extract_batch_groups(payload)
+                flat_rows = [
+                    transaction
+                    for batch in batch_groups
+                    for sub_batch in batch.get("sub_batches", [])
+                    for transaction in sub_batch.get("transactions", [])
+                ]
+                self.after(
+                    0,
+                    lambda groups=batch_groups, rows=flat_rows: self._apply_loaded_transactions(groups, rows),
+                )
             except urllib.error.HTTPError as err:
                 self.after(0, lambda: messagebox.showerror("API Error", f"HTTP {err.code}: {err.reason}"))
             except urllib.error.URLError as err:
@@ -1051,67 +1126,55 @@ class Application(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _apply_loaded_transactions(self, data):
+    def _apply_loaded_transactions(self, batch_groups, data):
+        self.batch_groups = batch_groups
         self.all_rows = data
-        valid_keys = {self._row_key(row) for row in data}
-        self.row_selection_state = {
-            key: val for key, val in self.row_selection_state.items() if key in valid_keys
+        valid_batch_ids = {
+            str(batch.get("batch_id", "")).strip()
+            for batch in batch_groups
         }
-        valid_batches = {
-            str(row.get("batch_id", "")).strip() or "UNASSIGNED"
-            for row in data
-        }
-        self.batch_selection_state = {
-            key: val for key, val in self.batch_selection_state.items() if key in valid_batches
-        }
-        for batch_id in valid_batches:
-            self.batch_selection_state.setdefault(batch_id, False)
+        if self.selected_batch_var.get().strip() not in valid_batch_ids:
+            self.selected_batch_var.set("")
         self._refresh_match_counts()
-        self._apply_filter()
-        if self.status_bar:
-            self.status_bar.config(text=f"{len(valid_batches)} batches loaded")
-
-    def _refresh_batch_list(self):
-        return
-
-    def _on_batch_select(self, _event=None):
         self._apply_filter()
 
     def _select_all_visible_rows(self):
-        # Batch-level selection only.
-        for item in self.row_vars:
-            batch_id = item["batch_id"].get().strip() or "UNASSIGNED"
-            self.batch_selection_state[batch_id] = True
+        selected_group = self._selected_batch_group()
+        if selected_group is None and self.batch_groups:
+            self.selected_batch_var.set(str(self.batch_groups[0].get("batch_id", "")).strip())
+            self._apply_filter()
 
-    # ---- Filter ----
     def _apply_filter(self):
         if not self.cards_frame:
             return
 
         self._sync_current_edits()
-        self._render_rows(self.all_rows)
-        if self.section_count_label:
-            self.section_count_label.configure(text=f"Sales Acc Receipt Gen ({self.current_batch_count} batches)")
+        self._render_rows(self.batch_groups)
+        self._refresh_match_counts()
         if self.status_bar:
-            self.status_bar.config(text=f"Showing {self.current_batch_count} batches")
+            self.status_bar.config(text=self._status_text())
 
-    # ---- Submit ----
     def _submit_selection(self):
-        selected = []
-        for item in self.row_vars:
-            batch_id = item["batch_id"].get().strip() or "UNASSIGNED"
-            if self.batch_selection_state.get(batch_id, False):
-                record = {k: item[k].get() for k in KEY_MAP if k != "check" and k in item}
-                uuid_var = item.get("uuid")
-                record["uuid"] = uuid_var.get().strip() if uuid_var else ""
-                selected.append(record)
-
-        if not selected:
-            messagebox.showwarning("No Selection",
-                                    "Please select at least one batch to submit.")
+        self._sync_current_edits()
+        selected_group = self._selected_batch_group()
+        if selected_group is None:
+            messagebox.showwarning("No Selection", "Please select one main batch to submit.")
             return
 
-        if self._confirm_automation_dialog(len(selected)):
+        batch_id = str(selected_group.get("batch_id", "")).strip() or "UNASSIGNED"
+        selected = [
+            dict(record)
+            for sub_batch in selected_group.get("sub_batches", [])
+            for record in sub_batch.get("transactions", [])
+        ]
+        sub_batch_count = len(selected_group.get("sub_batches", []))
+        transaction_count = len(selected)
+
+        if not selected:
+            messagebox.showwarning("No Transactions", "The selected batch does not contain any transactions.")
+            return
+
+        if self._confirm_automation_dialog(batch_id, sub_batch_count, transaction_count):
             if not self._validate_config_for_action(require_auth_state=True):
                 return
             threading.Thread(target=self._run_automation, args=(selected,), daemon=True).start()
@@ -1358,6 +1421,11 @@ class Application(tk.Tk):
             self.after(0, lambda: messagebox.showerror(
                 "Error", "automation module not found."))
         except Exception as e:
+            if e.__class__.__name__ == "AutomationStoppedByUser":
+                print(f"Automation stopped by user: {e}")
+                self.after(0, lambda err=e: messagebox.showinfo(
+                    "Automation Stopped", f"{err}"))
+                return
             print(f"Automation error: {e}")
             if self._is_missing_playwright_browser_error(e):
                 self.after(0, lambda err=e: self._offer_browser_download(err, "Automation"))
