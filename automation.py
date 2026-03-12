@@ -720,7 +720,7 @@ def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int,
     heading = (
         "All sub-batches completed."
         if is_last_sub_batch
-        else f"Sub-batch {current_index} of {total_sub_batches} completed."
+        else f"Sub-batch {current_index} of {total_sub_batches} completed. Please Click Ctrl+R to refresh the page before continuing to the next sub-batch."
     )
     body = (
         "Click Close Window to finish."
@@ -816,8 +816,8 @@ def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int,
 def _refresh_for_next_batch(page):
     print("Refreshing page for next batch...")
     try:
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=CONFIG["page_load_timeout_ms"]):
-            page.keyboard.press("Control+R")
+        page.keyboard.press("Control+R")
+        page.wait_for_load_state("domcontentloaded", timeout=CONFIG["page_load_timeout_ms"])
     except Exception as err:
         print(f"Control+R refresh failed ({err}); using page.reload().")
         page.reload(timeout=CONFIG["page_load_timeout_ms"], wait_until="domcontentloaded")
@@ -1564,7 +1564,7 @@ def test_loginfunctionality():
                 page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=10000)
             except PlaywrightTimeoutError:
                 print("Overlay still visible after 10s during login flow.")
-           #Close page and persist storage state after successful login
+
             page.close()
             _persist_storage_state(context)
             print(f"Login session saved at: {CONFIG['auth_json_path']}")
