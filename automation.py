@@ -17,6 +17,7 @@ from datetime import datetime
 import getpass
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -42,6 +43,15 @@ PLACEHOLDER_TOKENS = (
     "example.com",
     "replace_me",
 )
+
+LOGIN_REDIRECT_HOSTS = (
+    "login.microsoftonline.com",
+    "login.live.com",
+    "login.windows.net",
+    "autologon.microsoftazuread-sso.com",
+)
+
+EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 
 _exe_dir = (
     Path(sys.executable).resolve().parent
@@ -306,11 +316,13 @@ def _get_browser_dimensions() -> tuple[int, int]:
     return screen_w, screen_h
 
 
-def _create_browser(playwright):
+def _create_browser(playwright, *, headless: bool | None = None):
     screen_w, screen_h = _get_browser_dimensions()
     viewport_size = f"{screen_w},{screen_h}"
+    if headless is None:
+        headless = CONFIG["browser_headless"]
     browser = playwright.chromium.launch(
-        headless=CONFIG["browser_headless"],
+        headless=headless,
         slow_mo=CONFIG["browser_slow_mo_ms"],
         args=[f"--window-size={viewport_size}"],
     )
@@ -474,7 +486,155 @@ class AutomationStoppedByUser(RuntimeError):
     pass
 
 
+class SessionExpiredError(RuntimeError):
+    pass
+
+
+def _auth_result(valid: bool, display_name: str | None = None, reason: str | None = None) -> dict:
+    return {
+        "valid": bool(valid),
+        "display_name": display_name.strip() if isinstance(display_name, str) and display_name.strip() else None,
+        "reason": reason.strip() if isinstance(reason, str) and reason.strip() else None,
+    }
+
+
+def _is_login_redirect(url: str) -> bool:
+    hostname = (urlparse(str(url or "")).hostname or "").lower()
+    return any(
+        hostname == host or hostname.endswith(f".{host}")
+        for host in LOGIN_REDIRECT_HOSTS
+    )
+
+
+def _is_expected_d365_url(url: str) -> bool:
+    expected_host = (urlparse(str(CONFIG.get("d365_url", ""))).hostname or "").lower()
+    current_host = (urlparse(str(url or "")).hostname or "").lower()
+    return bool(expected_host and current_host and current_host == expected_host)
+
+
+def _ensure_authenticated(page, load_label: str = "page"):
+    current_url = str(page.url or "").strip()
+    if _is_login_redirect(current_url):
+        raise SessionExpiredError("Saved session expired. Click Login and sign in again.")
+    if not _is_expected_d365_url(current_url):
+        raise SessionExpiredError(
+            f"Expected D365 page after loading {load_label}, but got: {current_url or 'unknown page'}"
+        )
+
+
+def _normalize_identity_text(raw_value: str | None) -> str | None:
+    value = " ".join(str(raw_value or "").replace("\xa0", " ").split())
+    if not value:
+        return None
+
+    email_match = EMAIL_PATTERN.search(value)
+    if email_match:
+        return email_match.group(0)
+
+    lowered = value.lower()
+    for prefix in (
+        "account manager for ",
+        "signed in as ",
+        "signed in: ",
+        "current account: ",
+        "account: ",
+        "user: ",
+    ):
+        if lowered.startswith(prefix):
+            value = value[len(prefix):].strip(" :-")
+            lowered = value.lower()
+            break
+
+    if not value or len(value) < 3 or len(value) > 80:
+        return None
+
+    if lowered in {
+        "account manager",
+        "manage account",
+        "user options",
+        "my account",
+        "profile",
+        "settings",
+        "sign out",
+        "sign in",
+        "logout",
+        "log out",
+        "logged in",
+    }:
+        return None
+
+    if any(token in lowered for token in ("http://", "https://", "sign out", "logout", "log out")):
+        return None
+
+    words = value.split()
+    if len(words) > 6:
+        return None
+
+    return value
+
+
+def _extract_signed_in_user(page) -> str | None:
+    candidate_script = """
+        () => {
+            const seen = new Set();
+            const results = [];
+            const add = (value) => {
+                if (typeof value !== 'string') return;
+                const normalized = value.replace(/\\s+/g, ' ').trim();
+                if (!normalized || seen.has(normalized)) return;
+                seen.add(normalized);
+                results.push(normalized);
+            };
+            const selectors = [
+                "[data-dyn-controlname='UserOptionsButton']",
+                "[data-dyn-title='User options']",
+                "[data-dyn-title='Account manager']",
+                "#meControl",
+                "#mectrl_currentAccount_primary",
+                "#mectrl_currentAccount_secondary",
+                "#O365_MainLink_Me",
+                "[data-testid='mectrl_main_trigger']",
+                "[aria-label*='Account manager']",
+                "[title*='Account manager']",
+                "[aria-label*='@']",
+                "[title*='@']"
+            ];
+
+            for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                    add(el.innerText);
+                    add(el.textContent);
+                    add(el.getAttribute("aria-label"));
+                    add(el.getAttribute("title"));
+                    add(el.getAttribute("data-dyn-title"));
+                }
+            }
+
+            return results;
+        }
+    """
+
+    for _ in range(4):
+        try:
+            raw_candidates = page.evaluate(candidate_script)
+        except Exception:
+            raw_candidates = []
+
+        for candidate in raw_candidates or []:
+            cleaned = _normalize_identity_text(candidate)
+            if cleaned:
+                return cleaned
+
+        try:
+            page.wait_for_timeout(750)
+        except Exception:
+            break
+
+    return None
+
+
 def _wait_for_d365_ready(page, load_label: str = "page"):
+    _ensure_authenticated(page, load_label)
     print(f"Waiting for {load_label} load...")
     for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
         print(f"Loading... {i}")
@@ -484,6 +644,43 @@ def _wait_for_d365_ready(page, load_label: str = "page"):
         page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=60000)
     except PlaywrightTimeoutError:
         print("Overlay did not disappear in 60s; continuing.")
+    _ensure_authenticated(page, load_label)
+
+
+def probe_saved_session(headless: bool = True) -> dict:
+    issues = get_config_issues(require_auth_state=True)
+    if issues:
+        return _auth_result(False, reason="; ".join(issues))
+
+    if not sync_playwright:
+        return _auth_result(False, reason="Playwright is not installed.")
+
+    with sync_playwright() as playwright:
+        browser = None
+        context = None
+        page = None
+        try:
+            browser, screen_w, screen_h = _create_browser(playwright, headless=headless)
+            context = _create_context(browser, screen_w, screen_h, use_storage_state=True)
+            page = context.new_page()
+            page.goto(
+                CONFIG["d365_url"],
+                timeout=CONFIG["page_load_timeout_ms"],
+                wait_until="domcontentloaded",
+            )
+            _wait_for_d365_ready(page, "saved session")
+            return _auth_result(True, display_name=_extract_signed_in_user(page))
+        except SessionExpiredError as err:
+            return _auth_result(False, reason=str(err))
+        except Exception as err:
+            return _auth_result(False, reason=f"Unable to validate saved session: {err}")
+        finally:
+            if page is not None and not page.is_closed():
+                page.close()
+            if context is not None:
+                context.close()
+            if browser is not None:
+                browser.close()
 
 
 def _open_journal_lines(page):
@@ -1012,13 +1209,22 @@ def _process_sub_batch(page, records):
 
         if force_manual_wipe_before_fill:
             print(f"[{time.time():.3f}] Continue path: starting manual row wipe before fill.")
-            for loc in (value_date_loc, credit_loc, ref_date_loc, pay_ref_loc):
+            for loc in (pay_ref_loc, value_date_loc, credit_loc, ref_date_loc):
                 try:
                     loc.click()
                     loc.press("Control+A")
                     loc.press("Backspace")
                 except Exception:
                     pass
+
+        pay_ref_loc.click()
+        if force_manual_wipe_before_fill:
+            try:
+                pay_ref_loc.press("Control+A")
+                pay_ref_loc.press("Backspace")
+            except Exception:
+                pass
+        pay_ref_loc.press_sequentially(pay_ref, delay=100)
 
         value_date_loc.press_sequentially(val_date, delay=200)
 
@@ -1131,15 +1337,6 @@ def _process_sub_batch(page, records):
                 ref_date_loc.press_sequentially(ref_date, delay=200)
         except Exception:
             pass
-
-        pay_ref_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                pay_ref_loc.press("Control+A")
-                pay_ref_loc.press("Backspace")
-            except Exception:
-                pass
-        pay_ref_loc.press_sequentially(pay_ref, delay=100)
 
         try:
             value_date_loc.fill(val_date)
@@ -1396,7 +1593,14 @@ def test_final8(records=None):
     print(f"Starting automation with {len(records)} records...")
     if not sync_playwright:
         print("Playwright is not installed. Skipping automation.")
-        return
+        raise RuntimeError("Playwright is not installed.")
+
+    probe_result = probe_saved_session(headless=True)
+    if not probe_result.get("valid"):
+        probe_reason = str(probe_result.get("reason") or "").strip()
+        if probe_reason.startswith("Unable to validate saved session:"):
+            raise RuntimeError(probe_reason)
+        raise SessionExpiredError("Saved session expired. Click Login and sign in again.")
 
     batch_id = str(records[0].get("batch_id", "")).strip() or "UNASSIGNED"
     sub_batch_groups = _group_records_by_sub_batch(records)
@@ -1477,7 +1681,7 @@ def test_loginfunctionality():
     print("Starting Login Automation...")
     if not sync_playwright:
         print("Playwright is not installed.")
-        return
+        raise RuntimeError("Playwright is not installed.")
 
     with sync_playwright() as playwright:
         browser = None
@@ -1559,15 +1763,13 @@ def test_loginfunctionality():
                     "Finish sign-in and click 'Login Success' only after landing on D365."
                 )
 
-            # Wait for D365 blocking overlay to disappear (just in case)
-            try:
-                page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=10000)
-            except PlaywrightTimeoutError:
-                print("Overlay still visible after 10s during login flow.")
+            _wait_for_d365_ready(page, "login flow")
+            display_name = _extract_signed_in_user(page)
 
             page.close()
             _persist_storage_state(context)
             print(f"Login session saved at: {CONFIG['auth_json_path']}")
+            return _auth_result(True, display_name=display_name)
         finally:
             if page is not None and not page.is_closed():
                 page.close()

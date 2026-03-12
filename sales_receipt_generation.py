@@ -384,6 +384,9 @@ class Application(tk.Tk):
         self.row_count_label: Optional[tk.Label] = None
         self.section_count_label: Optional[tk.Label] = None
         self.status_bar: Optional[tk.Label] = None
+        self.login_button: Optional[tk.Button] = None
+        self._auth_probe_serial = 0
+        self._login_display_name: Optional[str] = None
 
         # Professional Color Palette (modal/card style)
         self.colors = {
@@ -451,7 +454,7 @@ class Application(tk.Tk):
 
         top_actions = tk.Frame(toolbar, bg=self.colors["frame_bg"])
         top_actions.pack(side="right")
-        tk.Button(
+        self.login_button = tk.Button(
             top_actions,
             text="Login",
             command=self._run_login_automation,
@@ -464,7 +467,8 @@ class Application(tk.Tk):
             font=("Segoe UI", 10, "bold"),
             padx=16,
             pady=7,
-        ).pack(side="right", padx=(0, 8))
+        )
+        self.login_button.pack(side="right", padx=(0, 8))
 
         tk.Button(
             top_actions,
@@ -549,8 +553,69 @@ class Application(tk.Tk):
         self.status_bar.pack(side="left", padx=(10, 0))
 
         self._browser_check_prompted = False
+        self._set_login_button_state(False)
+        self.after(250, self._refresh_login_button_async)
         self.after(600, self._check_browser_ready_on_launch)
         self.after(200, self._load_transactions)
+
+    def _set_login_button_state(self, valid: bool, display_name: Optional[str] = None):
+        if self.login_button is None:
+            return
+
+        normalized_name = str(display_name or "").strip() or None
+        self._login_display_name = normalized_name if valid else None
+        button_text = (normalized_name or "Logged In") if valid else "Login"
+        button_bg = self.colors["accent"] if valid else self.colors["success"]
+        active_bg = "#264fdf" if valid else "#14913f"
+        self.login_button.config(
+            text=button_text,
+            bg=button_bg,
+            activebackground=active_bg,
+        )
+
+    def _apply_auth_result(self, auth_result: Optional[dict], *, invalidate_pending: bool = False):
+        if invalidate_pending:
+            self._auth_probe_serial += 1
+
+        valid = bool(isinstance(auth_result, dict) and auth_result.get("valid"))
+        display_name = None
+        if valid and isinstance(auth_result, dict):
+            display_name = str(auth_result.get("display_name") or "").strip() or None
+        self._set_login_button_state(valid, display_name)
+
+    def _apply_auth_probe_result(self, probe_id: int, auth_result: Optional[dict]):
+        if probe_id != self._auth_probe_serial:
+            return
+        self._apply_auth_result(auth_result)
+
+    def _refresh_login_button_async(self):
+        if automation_module is None or not hasattr(automation_module, "probe_saved_session"):
+            self._set_login_button_state(False)
+            return
+
+        self._auth_probe_serial += 1
+        probe_id = self._auth_probe_serial
+
+        def probe_task():
+            try:
+                auth_result = automation_module.probe_saved_session(headless=True)
+            except Exception as err:
+                print(f"Auth status probe failed: {err}")
+                auth_result = {"valid": False, "display_name": None, "reason": str(err)}
+
+            self.after(
+                0,
+                lambda pid=probe_id, result=auth_result: self._apply_auth_probe_result(pid, result),
+            )
+
+        threading.Thread(target=probe_task, daemon=True).start()
+
+    def _handle_session_expired(self, err: Exception):
+        self._apply_auth_result({"valid": False}, invalidate_pending=True)
+        detail = str(err).strip() or "Saved D365 session expired."
+        if "click login" not in detail.lower():
+            detail = f"{detail}\n\nClick Login and sign in again."
+        messagebox.showerror("Session Expired", detail)
 
     def _on_cards_frame_configure(self, _event=None):
         if self.cards_canvas:
@@ -1426,6 +1491,11 @@ class Application(tk.Tk):
                 self.after(0, lambda err=e: messagebox.showinfo(
                     "Automation Stopped", f"{err}"))
                 return
+            session_expired_type = getattr(automation_module, "SessionExpiredError", None)
+            if session_expired_type and isinstance(e, session_expired_type):
+                print(f"Automation session expired: {e}")
+                self.after(0, lambda err=e: self._handle_session_expired(err))
+                return
             print(f"Automation error: {e}")
             if self._is_missing_playwright_browser_error(e):
                 self.after(0, lambda err=e: self._offer_browser_download(err, "Automation"))
@@ -1444,11 +1514,13 @@ class Application(tk.Tk):
                 # Use after to show info on main thread
                 # self.after(0, lambda: messagebox.showinfo("Info", "Starting Login Automation..."))
                 print("--- Login Automation Started ---")
-                automation_module.test_loginfunctionality()
+                auth_result = automation_module.test_loginfunctionality()
                 print("--- Login Automation Finished ---")
+                self.after(0, lambda result=auth_result: self._apply_auth_result(result, invalidate_pending=True))
                 self.after(0, lambda: messagebox.showinfo("Success", "Login automation completed."))
             except Exception as e:
                 print(f"Login error: {e}")
+                self.after(0, self._refresh_login_button_async)
                 if self._is_missing_playwright_browser_error(e):
                     self.after(0, lambda err=e: self._offer_browser_download(err, "Login"))
                 else:
