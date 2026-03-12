@@ -140,7 +140,7 @@ class SalesAccReceiptGenDialog(tk.Toplevel):
         self.project_cb.pack(fill="x", pady=(0, 14))
         self.project_cb.bind("<<ComboboxSelected>>", self._update_units)
 
-        # --- Unit Number ---
+        # ---- Unit Number ----
         label("Unit Number", required=True)
         badge(self.row_data.get("unit", ""))
         # self.unit_var inited above
