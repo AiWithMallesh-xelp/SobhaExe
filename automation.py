@@ -1564,7 +1564,7 @@ def test_loginfunctionality():
                 page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=10000)
             except PlaywrightTimeoutError:
                 print("Overlay still visible after 10s during login flow.")
-
+           #Close page and persist storage state after successful login
             page.close()
             _persist_storage_state(context)
             print(f"Login session saved at: {CONFIG['auth_json_path']}")
