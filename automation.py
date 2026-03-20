@@ -639,8 +639,6 @@ def _wait_for_d365_ready(page, load_label: str = "page"):
         print("Session checking 3-2-1")
         for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
             print(f"Session checking {i}")
-            time.sleep(1)
-        print("Opening...")
     else:
         print(f"Waiting for {load_label} load...")
         for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
