@@ -635,11 +635,18 @@ def _extract_signed_in_user(page) -> str | None:
 
 def _wait_for_d365_ready(page, load_label: str = "page"):
     _ensure_authenticated(page, load_label)
-    print(f"Waiting for {load_label} load...")
-    for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
-        print(f"Loading... {i}")
-        time.sleep(1)
-    print(f"{load_label.capitalize()} fully loaded!")
+    if load_label == "saved session":
+        print("Session checking 3-2-1")
+        for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
+            print(f"Session checking {i}")
+            time.sleep(1)
+        print("Opening...")
+    else:
+        print(f"Waiting for {load_label} load...")
+        for i in range(CONFIG["page_load_wait_seconds"], 0, -1):
+            print(f"Loading... {i}")
+            time.sleep(1)
+        print(f"{load_label.capitalize()} fully loaded!")
     try:
         page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=60000)
     except PlaywrightTimeoutError:
@@ -1594,13 +1601,6 @@ def test_final8(records=None):
     if not sync_playwright:
         print("Playwright is not installed. Skipping automation.")
         raise RuntimeError("Playwright is not installed.")
-
-    probe_result = probe_saved_session(headless=True)
-    if not probe_result.get("valid"):
-        probe_reason = str(probe_result.get("reason") or "").strip()
-        if probe_reason.startswith("Unable to validate saved session:"):
-            raise RuntimeError(probe_reason)
-        raise SessionExpiredError("Saved session expired. Click Login and sign in again.")
 
     batch_id = str(records[0].get("batch_id", "")).strip() or "UNASSIGNED"
     sub_batch_groups = _group_records_by_sub_batch(records)

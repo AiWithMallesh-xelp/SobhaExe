@@ -596,6 +596,26 @@ class Application(tk.Tk):
         self._auth_probe_serial += 1
         probe_id = self._auth_probe_serial
 
+        # UI Animation for session checking
+        self._is_checking_session = True
+        self._session_check_step = 3
+        if self.login_button:
+            self.login_button.config(state="disabled", bg="#6c757d", cursor="watch")
+            
+        def update_button_animation():
+            if not getattr(self, "_is_checking_session", False):
+                return
+            if self.login_button:
+                if self._session_check_step > 0:
+                    self.login_button.config(text=f"Session checking {self._session_check_step}")
+                    self._session_check_step -= 1
+                    self.after(1000, update_button_animation)
+                else:
+                    self.login_button.config(text="Opening...")
+                    # Let it stay as Opening... until the probe finishes
+                    
+        update_button_animation()
+
         def probe_task():
             try:
                 auth_result = automation_module.probe_saved_session(headless=True)
@@ -603,10 +623,13 @@ class Application(tk.Tk):
                 print(f"Auth status probe failed: {err}")
                 auth_result = {"valid": False, "display_name": None, "reason": str(err)}
 
-            self.after(
-                0,
-                lambda pid=probe_id, result=auth_result: self._apply_auth_probe_result(pid, result),
-            )
+            def on_complete():
+                self._is_checking_session = False
+                if self.login_button:
+                    self.login_button.config(state="normal", cursor="hand2")
+                self._apply_auth_probe_result(probe_id, auth_result)
+
+            self.after(0, on_complete)
 
         threading.Thread(target=probe_task, daemon=True).start()
 
