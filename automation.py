@@ -323,7 +323,7 @@ def _create_browser(playwright, *, headless: bool | None = None):
         headless = CONFIG["browser_headless"]
     browser = playwright.chromium.launch(
         headless=headless,
-        slow_mo=CONFIG["browser_slow_mo_ms"],
+        slow_mo=0,
         args=[f"--window-size={viewport_size}"],
     )
     return browser, screen_w, screen_h
@@ -1208,6 +1208,26 @@ def _process_sub_batch(page, records):
         if not acc_no:
             raise ValueError(f"Missing account in record {idx + 1}; refusing implicit fallback account.")
 
+        def _fast_fill(locator, value, *, force_click=False, commit=False):
+            text = str(value or "")
+            try:
+                locator.scroll_into_view_if_needed(timeout=1000)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                pass
+            try:
+                locator.click(force=force_click)
+                locator.fill(text)
+            except Exception:
+                locator.click(force=force_click)
+                locator.press("Control+A")
+                locator.press("Backspace")
+                locator.type(text, delay=0)
+            if commit:
+                try:
+                    locator.press("Tab")
+                except Exception:
+                    pass
+
         value_date_loc = page.get_by_role("combobox", name="Value date")
         credit_loc = page.get_by_role("textbox", name="Credit")
         ref_date_loc = page.get_by_role("combobox", name="Reference date")
@@ -1240,53 +1260,29 @@ def _process_sub_batch(page, records):
             except Exception:
                 pass
 
-        pay_ref_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                pay_ref_loc.press("Control+A")
-                pay_ref_loc.press("Backspace")
-            except Exception:
-                pass
-        pay_ref_loc.press_sequentially(pay_ref, delay=100)
-
-        value_date_loc.press_sequentially(val_date, delay=200)
+        _fast_fill(pay_ref_loc, pay_ref)
+        _fast_fill(value_date_loc, val_date)
 
         account_field = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
         if idx > 0:
             account_field = account_field.first
         account_field.wait_for(state="visible", timeout=200)
-        account_field.click()
-        account_field.press("Control+A")
-        account_field.press("Backspace")
-        account_field.press_sequentially(acc_no, delay=20)
+        _fast_fill(account_field, acc_no)
 
         try:
             entered_account = (account_field.input_value() or "").strip()
             if entered_account and entered_account.casefold() != acc_no.casefold():
-                account_field.click()
-                account_field.press("Control+A")
-                account_field.press("Backspace")
-                account_field.press_sequentially(acc_no, delay=20)
+                _fast_fill(account_field, acc_no)
         except PlaywrightError:
             pass
 
-        credit_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                credit_loc.press("Control+A")
-                credit_loc.press("Backspace")
-            except Exception:
-                pass
-        credit_loc.press_sequentially(credit_amt, delay=200)
+        _fast_fill(credit_loc, credit_amt)
 
         # Fill Offset account field
         if offset_acc:
             try:
                 offset_account_field.wait_for(state="visible", timeout=5000)
-                offset_account_field.click()
-                offset_account_field.press("Control+A")
-                offset_account_field.press("Backspace")
-                offset_account_field.press_sequentially(offset_acc, delay=20)
+                _fast_fill(offset_account_field, offset_acc)
                 print(f"Filled offset account: {offset_acc}")
             except Exception as err:
                 print(f"Warning: Could not fill offset account '{offset_acc}': {err}")
@@ -1302,74 +1298,35 @@ def _process_sub_batch(page, records):
             except Exception:
                 pass
 
-        def _select_method_of_payment(force=False):
+        def _fill_method_of_payment(force=False):
+            method_text = str(pay_method or "").strip()
+            if not method_text:
+                return
             try:
                 current_method = (paym_mode_input.input_value() or "").strip().lower()
-                if not force and current_method == str(pay_method).strip().lower():
+                if not force and current_method == method_text.lower():
                     return
             except Exception:
                 pass
             try:
-                paym_mode_input.scroll_into_view_if_needed(timeout=5000)
+                paym_mode_input.scroll_into_view_if_needed(timeout=1000)
             except (PlaywrightTimeoutError, PlaywrightError):
                 pass
-            paym_mode_input.click(force=True)
-            paym_mode_input.press("Alt+ArrowDown")
-            method_selected = False
-            method_exact = page.locator(
-                f"input[aria-label='Method of payment'][id^='Sel_'][title='{pay_method}']"
-            )
-            if method_exact.count() > 0:
-                method_exact.first.click()
-                method_selected = True
-            if not method_selected:
-                try:
-                    page.evaluate(
-                        """
-                        (method) => {
-                            const target = [...document.querySelectorAll(
-                                "input[aria-label='Method of payment'][id^='Sel_']"
-                            )].find(el => {
-                                const txt = (el.getAttribute('title') || el.value || '').trim().toLowerCase();
-                                return txt === String(method).trim().toLowerCase();
-                            });
-                            if (!target) throw new Error(`Method not found in dropdown: ${method}`);
-                            target.click();
-                        }
-                        """,
-                        pay_method,
-                    )
-                    method_selected = True
-                except Exception:
-                    pass
-            if not method_selected:
-                try:
-                    page.evaluate(
-                        """
-                        () => {
-                            const el = document.querySelector("input[aria-label='Method of payment']");
-                            if (el) { el.scrollIntoView({block: 'center'}); el.click(); }
-                        }
-                        """
-                    )
-                except Exception as err:
-                    print(f"Warning: Method of payment all fallbacks failed for '{pay_method}': {err}")
-
-        _select_method_of_payment(force=False)
-
-        ref_date_loc.click()
-        if force_manual_wipe_before_fill:
             try:
-                ref_date_loc.press("Control+A")
-                ref_date_loc.press("Backspace")
-            except Exception:
-                pass
-        ref_date_loc.press_sequentially(ref_date, delay=200)
+                _fast_fill(paym_mode_input, method_text, force_click=True, commit=True)
+                current_method = (paym_mode_input.input_value() or "").strip()
+                if current_method and current_method.casefold() != method_text.casefold():
+                    _fast_fill(paym_mode_input, method_text, force_click=True, commit=True)
+            except Exception as err:
+                print(f"Warning: Could not fill Method of payment '{method_text}': {err}")
+
+        _fill_method_of_payment(force=False)
+
+        _fast_fill(ref_date_loc, ref_date)
         try:
             current_ref_val = ref_date_loc.input_value().strip()
             if not current_ref_val:
-                ref_date_loc.click()
-                ref_date_loc.press_sequentially(ref_date, delay=200)
+                _fast_fill(ref_date_loc, ref_date)
         except Exception:
             pass
 
@@ -1377,14 +1334,11 @@ def _process_sub_batch(page, records):
             value_date_loc.fill(val_date)
             current_value_date = value_date_loc.input_value().strip()
             if current_value_date != val_date:
-                value_date_loc.click()
-                value_date_loc.press("Control+A")
-                value_date_loc.press("Backspace")
-                value_date_loc.press_sequentially(val_date, delay=40)
+                _fast_fill(value_date_loc, val_date)
         except Exception:
             pass
 
-        _select_method_of_payment(force=True)
+        _fill_method_of_payment(force=True)
 
         try:
             current_pay_ref = (pay_ref_loc.input_value() or "").strip()
@@ -1394,13 +1348,10 @@ def _process_sub_batch(page, records):
         if not current_pay_ref:
             print("Payment reference is empty before Save. Refilling and reapplying method.")
             try:
-                pay_ref_loc.click()
-                pay_ref_loc.press("Control+A")
-                pay_ref_loc.press("Backspace")
-                pay_ref_loc.press_sequentially(pay_ref, delay=120)
+                _fast_fill(pay_ref_loc, pay_ref)
             except PlaywrightError as err:
                 print(f"Warning: Could not refill Payment reference '{pay_ref}': {err}")
-            _select_method_of_payment(force=True)
+            _fill_method_of_payment(force=True)
 
             try:
                 current_pay_ref = (pay_ref_loc.input_value() or "").strip()
@@ -1644,7 +1595,8 @@ def test_final8(records=None):
             except (PlaywrightError, OSError, ValueError) as err:
                 print(f"Auth state unavailable, starting a fresh context: {err}")
                 context = _create_context(browser, screen_w, screen_h, use_storage_state=False)
-            context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
+            # Visual cursor/click overlay disabled for faster, quieter automation.
+            # context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
             page = context.new_page()
 
             print("Navigating to D365...")
@@ -1718,7 +1670,8 @@ def test_loginfunctionality():
         try:
             browser, screen_w, screen_h = _create_browser(playwright)
             context = _create_context(browser, screen_w, screen_h, use_storage_state=False)
-            context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
+            # Visual cursor/click overlay disabled for faster, quieter automation.
+            # context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
             page = context.new_page()
 
             page.goto(
