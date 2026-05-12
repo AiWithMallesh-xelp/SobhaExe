@@ -1078,6 +1078,7 @@ def _process_sub_batch(page, records):
                             const vals = [
                                 read("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']"),
                                 read("input[aria-label='Credit']"),
+                                read("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']"),
                                 read("input[aria-label='Reference date']"),
                                 read("input[aria-label='Payment reference']"),
                                 read("input[aria-label='Method of payment']")
@@ -1097,6 +1098,7 @@ def _process_sub_batch(page, records):
             ref_date_clear = page.get_by_role("combobox", name="Reference date")
             pay_ref_clear = page.get_by_role("textbox", name="Payment reference")
             account_clear = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
+            offset_account_clear = page.locator("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']")
             method_clear = page.get_by_label("Method of payment")
             if idx > 0:
                 value_date_clear = value_date_clear.first
@@ -1104,6 +1106,7 @@ def _process_sub_batch(page, records):
                 ref_date_clear = ref_date_clear.first
                 pay_ref_clear = pay_ref_clear.first
                 account_clear = account_clear.first
+                offset_account_clear = offset_account_clear.first
                 method_clear = method_clear.first
 
             def _wipe(locator):
@@ -1120,6 +1123,7 @@ def _process_sub_batch(page, records):
             _wipe(value_date_clear)
             _wipe(account_clear)
             _wipe(credit_clear)
+            _wipe(offset_account_clear)
             _wipe(ref_date_clear)
             _wipe(pay_ref_clear)
             _wipe(method_clear)
@@ -1169,6 +1173,7 @@ def _process_sub_batch(page, records):
                             clearValue("input[aria-label='Value date']"),
                             clearValue("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']"),
                             clearValue("input[aria-label='Credit']"),
+                            clearValue("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']"),
                             clearValue("input[aria-label='Reference date']"),
                             clearValue("input[aria-label='Payment reference']"),
                             clearValue("input[aria-label='Method of payment']")
@@ -1196,6 +1201,7 @@ def _process_sub_batch(page, records):
         val_date = _normalize_reference_date(record.get("value_date", "2/17/2026"))
         acc_no = str(record.get("account", "")).strip()
         credit_amt = record.get("credit", "25,000")
+        offset_acc = str(record.get("offset_account", "")).strip()
         ref_date = _normalize_reference_date(record.get("reference_date", "2/17/2026"))
         pay_ref = record.get("payment_reference", "YESBANK")
         pay_method = record.get("method_of_payment", "Wire Wire Transfer")
@@ -1212,6 +1218,11 @@ def _process_sub_batch(page, records):
             ref_date_loc = ref_date_loc.first
             pay_ref_loc = pay_ref_loc.first
 
+        # Locate offset account field
+        offset_account_field = page.locator("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']")
+        if idx > 0:
+            offset_account_field = offset_account_field.first
+
         if force_manual_wipe_before_fill:
             print(f"[{time.time():.3f}] Continue path: starting manual row wipe before fill.")
             for loc in (pay_ref_loc, value_date_loc, credit_loc, ref_date_loc):
@@ -1221,6 +1232,13 @@ def _process_sub_batch(page, records):
                     loc.press("Backspace")
                 except Exception:
                     pass
+            # Also clear offset account
+            try:
+                offset_account_field.click()
+                offset_account_field.press("Control+A")
+                offset_account_field.press("Backspace")
+            except Exception:
+                pass
 
         pay_ref_loc.click()
         if force_manual_wipe_before_fill:
@@ -1260,6 +1278,18 @@ def _process_sub_batch(page, records):
             except Exception:
                 pass
         credit_loc.press_sequentially(credit_amt, delay=200)
+
+        # Fill Offset account field
+        if offset_acc:
+            try:
+                offset_account_field.wait_for(state="visible", timeout=5000)
+                offset_account_field.click()
+                offset_account_field.press("Control+A")
+                offset_account_field.press("Backspace")
+                offset_account_field.press_sequentially(offset_acc, delay=20)
+                print(f"Filled offset account: {offset_acc}")
+            except Exception as err:
+                print(f"Warning: Could not fill offset account '{offset_acc}': {err}")
 
         paym_mode_input = page.get_by_label("Method of payment")
         if idx > 0:
