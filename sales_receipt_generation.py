@@ -19,6 +19,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -130,6 +131,69 @@ DEFAULT_CLIPBOARD_COL_DEFS = [
 TRANSACTION_FIELD_KEYS = [key for key, _label in DEFAULT_CLIPBOARD_COL_DEFS]
 TRANSACTION_FIELD_LABELS = {key: label for key, label in DEFAULT_CLIPBOARD_COL_DEFS}
 
+# Extra API / internal fields users can add from the preset list.
+EXTRA_FIELD_LABELS = {
+    "transaction_uuid": "Transaction UUID (API)",
+    "account_date": "Account date (API)",
+    "account_number": "Account number (API)",
+    "transaction_amount": "Transaction amount (API)",
+    "transaction_description": "Transaction description (API)",
+    "mode_of_transaction": "Mode of transaction (API)",
+    "receipt_number": "Receipt number (API)",
+    "txn_source": "Txn source (API)",
+    "created_at": "Created at (API)",
+    "updated_at": "Updated at (API)",
+    "created_by": "Created by (API)",
+}
+PRESET_FIELD_LABELS = {**TRANSACTION_FIELD_LABELS, **EXTRA_FIELD_LABELS}
+PRESET_FIELD_KEYS = list(dict.fromkeys(TRANSACTION_FIELD_KEYS + list(EXTRA_FIELD_LABELS)))
+
+
+def _normalize_col_def(item) -> dict:
+    if isinstance(item, dict):
+        key = str(item.get("key", "")).strip()
+        label = str(item.get("label", TRANSACTION_FIELD_LABELS.get(key, key))).strip() or key
+        return {
+            "key": key,
+            "label": label,
+            "default_value": str(item.get("default_value", "") or ""),
+        }
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        key = str(item[0]).strip()
+        label = str(item[1]).strip() or key
+        default_value = str(item[2]).strip() if len(item) > 2 else ""
+        return {"key": key, "label": label, "default_value": default_value}
+    raise ValueError("Invalid column definition")
+
+
+def _normalize_col_defs(col_defs: list) -> list:
+    normalized = []
+    for item in col_defs:
+        col = _normalize_col_def(item)
+        if col.get("key"):
+            normalized.append(col)
+    return normalized
+
+
+def _slug_custom_field_key(header: str, used_keys: set) -> str:
+    base = re.sub(r"[^a-z0-9]+", "_", header.strip().lower()).strip("_") or "custom_field"
+    if not base.startswith("custom_"):
+        base = f"custom_{base}"
+    candidate = base
+    suffix = 2
+    while candidate in used_keys:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _resolve_clipboard_cell(txn: dict, col: dict) -> str:
+    key = col.get("key", "")
+    value = txn.get(key, "")
+    if value is None or str(value).strip() == "":
+        return str(col.get("default_value", "") or "")
+    return str(value)
+
 
 def _clipboard_columns_path() -> Path:
     env_path = os.environ.get("SOBHA_CLIPBOARD_COLUMNS_PATH")
@@ -139,7 +203,7 @@ def _clipboard_columns_path() -> Path:
 
 
 def load_clipboard_col_defs() -> list:
-    defaults = list(DEFAULT_CLIPBOARD_COL_DEFS)
+    defaults = [_normalize_col_def(item) for item in DEFAULT_CLIPBOARD_COL_DEFS]
     path = _clipboard_columns_path()
     if not path.exists():
         return defaults
@@ -148,15 +212,7 @@ def load_clipboard_col_defs() -> list:
             data = json.load(f)
         if not isinstance(data, list) or not data:
             return defaults
-        loaded = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            key = str(item.get("key", "")).strip()
-            if not key:
-                continue
-            label = str(item.get("label", TRANSACTION_FIELD_LABELS.get(key, key))).strip() or key
-            loaded.append((key, label))
+        loaded = _normalize_col_defs(data)
         return loaded or defaults
     except Exception:
         return defaults
@@ -165,7 +221,7 @@ def load_clipboard_col_defs() -> list:
 def save_clipboard_col_defs(col_defs: list) -> None:
     path = _clipboard_columns_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [{"key": key, "label": label} for key, label in col_defs]
+    payload = [_normalize_col_def(item) for item in col_defs]
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
@@ -179,10 +235,10 @@ def _excel_escape_cell(value) -> str:
 
 def build_excel_clipboard_text(transactions: list, col_defs: Optional[list] = None) -> str:
     """Build tab-separated rows (Excel-ready) from transaction dicts."""
-    columns = col_defs or load_clipboard_col_defs()
-    headers = [label for _key, label in columns]
+    columns = _normalize_col_defs(col_defs or load_clipboard_col_defs())
+    headers = [col["label"] for col in columns]
     data_rows = [
-        [str(txn.get(key, "") or "") for key, _label in columns]
+        [_resolve_clipboard_cell(txn, col) for col in columns]
         for txn in transactions
     ]
 
@@ -211,8 +267,8 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
     def __init__(self, parent, col_defs: list, on_save=None):
         super().__init__(parent)
         self.title("Copy Column Settings")
-        self.geometry("760x620")
-        self.minsize(680, 520)
+        self.geometry("900x680")
+        self.minsize(780, 560)
         self.configure(bg="white")
         self.on_save = on_save
         self.row_items = []
@@ -247,9 +303,15 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         header = tk.Frame(table_shell, bg="#f9fafd", pady=6)
         header.pack(fill="x", padx=1, pady=(1, 0))
         for col_idx, (text, width, anchor) in enumerate(
-            (("#", 36, "center"), ("Field", 180, "w"), ("Excel header", 280, "w"), ("Order", 120, "center"))
+            (
+                ("#", 36, "center"),
+                ("Field", 170, "w"),
+                ("Excel header", 220, "w"),
+                ("Default value", 160, "w"),
+                ("Order", 120, "center"),
+            )
         ):
-            header.grid_columnconfigure(col_idx, weight=1 if col_idx == 2 else 0)
+            header.grid_columnconfigure(col_idx, weight=1 if col_idx in {2, 3} else 0)
             tk.Label(
                 header,
                 text=text,
@@ -278,9 +340,9 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
 
         add_row = tk.Frame(main, bg="white")
         add_row.pack(fill="x", pady=(10, 0))
-        tk.Label(add_row, text="Add field:", bg="white", fg=text_color, font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(add_row, text="Add preset field:", bg="white", fg=text_color, font=("Segoe UI", 9, "bold")).pack(side="left")
         self.add_field_var = tk.StringVar()
-        self.add_field_cb = ttk.Combobox(add_row, textvariable=self.add_field_var, state="readonly", width=34)
+        self.add_field_cb = ttk.Combobox(add_row, textvariable=self.add_field_var, state="readonly", width=30)
         self.add_field_cb.pack(side="left", padx=(8, 8))
         tk.Button(
             add_row,
@@ -288,6 +350,28 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             command=self._add_selected_field,
             bg="#eef2ff",
             fg="#1d4ed8",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=12,
+            pady=4,
+            cursor="hand2",
+        ).pack(side="left")
+
+        custom_row = tk.Frame(main, bg="white")
+        custom_row.pack(fill="x", pady=(8, 0))
+        tk.Label(custom_row, text="Add custom field:", bg="white", fg=text_color, font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Label(custom_row, text="Header", bg="white", fg="#6b7280", font=("Segoe UI", 8)).pack(side="left", padx=(10, 4))
+        self.custom_header_var = tk.StringVar()
+        tk.Entry(custom_row, textvariable=self.custom_header_var, width=24, font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+        tk.Label(custom_row, text="Default value", bg="white", fg="#6b7280", font=("Segoe UI", 8)).pack(side="left", padx=(0, 4))
+        self.custom_default_var = tk.StringVar()
+        tk.Entry(custom_row, textvariable=self.custom_default_var, width=20, font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+        tk.Button(
+            custom_row,
+            text="Add custom",
+            command=self._add_custom_field,
+            bg="#ecfdf5",
+            fg="#047857",
             relief="flat",
             font=("Segoe UI", 9, "bold"),
             padx=12,
@@ -373,12 +457,17 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         for widget in self.rows_frame.winfo_children():
             widget.destroy()
         self.row_items = []
-        for index, (key, label) in enumerate(col_defs):
-            self._append_row(key, label, index + 1)
+        normalized = _normalize_col_defs(col_defs)
+        for index, col in enumerate(normalized):
+            self._append_row(col, index + 1)
         self._refresh_add_field_options()
         self._on_rows_configure(None)
 
-    def _append_row(self, key: str, label: str, index: int):
+    def _append_row(self, col: dict, index: int):
+        key = col["key"]
+        label = col["label"]
+        default_value = col.get("default_value", "")
+        is_custom = key.startswith("custom_") or key not in PRESET_FIELD_KEYS
         row_bg = "#ffffff" if index % 2 else "#fcfdff"
         row = tk.Frame(self.rows_frame, bg=row_bg, pady=4)
         row.pack(fill="x")
@@ -393,13 +482,14 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             anchor="center",
         ).grid(row=0, column=0, sticky="w", padx=(10, 6))
 
+        field_text = f"{key} (custom)" if is_custom else key
         tk.Label(
             row,
-            text=key,
+            text=field_text,
             bg=row_bg,
-            fg="#2e3b57",
+            fg="#7c3aed" if is_custom else "#2e3b57",
             font=("Segoe UI", 9),
-            width=24,
+            width=22,
             anchor="w",
         ).grid(row=0, column=1, sticky="w", padx=(0, 8))
 
@@ -412,8 +502,17 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             font=("Segoe UI", 9),
         ).grid(row=0, column=2, sticky="ew", padx=(0, 8))
 
+        default_var = tk.StringVar(value=default_value)
+        tk.Entry(
+            row,
+            textvariable=default_var,
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=3, sticky="ew", padx=(0, 8))
+
         actions = tk.Frame(row, bg=row_bg)
-        actions.grid(row=0, column=3, sticky="e", padx=(0, 8))
+        actions.grid(row=0, column=4, sticky="e", padx=(0, 8))
         tk.Button(
             actions,
             text="↑",
@@ -446,17 +545,23 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         ).pack(side="left")
 
         row.grid_columnconfigure(2, weight=1)
-        self.row_items.append({"key": key, "label_var": label_var})
+        row.grid_columnconfigure(3, weight=1)
+        self.row_items.append({"key": key, "label_var": label_var, "default_var": default_var})
 
     def _current_col_defs(self) -> list:
-        return [(item["key"], item["label_var"].get().strip() or item["key"]) for item in self.row_items]
+        return [
+            {
+                "key": item["key"],
+                "label": item["label_var"].get().strip() or item["key"],
+                "default_value": item["default_var"].get().strip(),
+            }
+            for item in self.row_items
+        ]
 
     def _refresh_add_field_options(self):
         used = {item["key"] for item in self.row_items}
-        available = [
-            key for key in TRANSACTION_FIELD_KEYS if key not in used
-        ]
-        labels = [f"{key} ({TRANSACTION_FIELD_LABELS.get(key, key)})" for key in available]
+        available = [key for key in PRESET_FIELD_KEYS if key not in used]
+        labels = [f"{key} ({PRESET_FIELD_LABELS.get(key, key)})" for key in available]
         self.add_field_cb["values"] = labels
         if labels:
             self.add_field_var.set(labels[0])
@@ -470,9 +575,24 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         key = selected.split(" (", 1)[0].strip()
         if not key or any(item["key"] == key for item in self.row_items):
             return
-        default_label = TRANSACTION_FIELD_LABELS.get(key, key)
-        self.row_items.append({"key": key, "label_var": tk.StringVar(value=default_label)})
-        self._set_rows(self._current_col_defs())
+        default_label = PRESET_FIELD_LABELS.get(key, key)
+        col_defs = self._current_col_defs()
+        col_defs.append({"key": key, "label": default_label, "default_value": ""})
+        self._set_rows(col_defs)
+
+    def _add_custom_field(self):
+        header = self.custom_header_var.get().strip()
+        if not header:
+            messagebox.showwarning("Copy Column Settings", "Enter a header name for the custom field.")
+            return
+        default_value = self.custom_default_var.get().strip()
+        used = {item["key"] for item in self.row_items}
+        key = _slug_custom_field_key(header, used)
+        col_defs = self._current_col_defs()
+        col_defs.append({"key": key, "label": header, "default_value": default_value})
+        self._set_rows(col_defs)
+        self.custom_header_var.set("")
+        self.custom_default_var.set("")
 
     def _move_row(self, key: str, direction: int):
         keys = [item["key"] for item in self.row_items]
@@ -490,19 +610,19 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         if len(self.row_items) <= 1:
             messagebox.showwarning("Copy Column Settings", "At least one column is required.")
             return
-        col_defs = [(k, l) for k, l in self._current_col_defs() if k != key]
+        col_defs = [col for col in self._current_col_defs() if col["key"] != key]
         self._set_rows(col_defs)
 
     def _reset_defaults(self):
         if messagebox.askyesno("Reset defaults", "Restore default copy columns?"):
-            self._set_rows(list(DEFAULT_CLIPBOARD_COL_DEFS))
+            self._set_rows([_normalize_col_def(item) for item in DEFAULT_CLIPBOARD_COL_DEFS])
 
     def _save(self):
         col_defs = self._current_col_defs()
         if not col_defs:
             messagebox.showwarning("Copy Column Settings", "Add at least one column before saving.")
             return
-        if any(not label for _key, label in col_defs):
+        if any(not col["label"] for col in col_defs):
             messagebox.showwarning("Copy Column Settings", "Every column needs a header name.")
             return
         save_clipboard_col_defs(col_defs)
@@ -1172,7 +1292,7 @@ class Application(tk.Tk):
         mapped_sub_batch_id = str(txn.get("sub_batch_id", "")).strip() or sub_batch_id or mapped_batch_id
         account_date = str(txn.get("account_date", "")).strip()
         payment_reference = str(txn.get("transaction_description", "")).strip()
-        return {
+        mapped = {
             "uuid": str(txn.get("uuid", "")).strip(),
             "batch_id": mapped_batch_id,
             "sub_batch_id": mapped_sub_batch_id,
@@ -1202,6 +1322,11 @@ class Application(tk.Tk):
             "original_payment_voucher": "",
             "reversal_payment_voucher": "",
         }
+        for raw_key, raw_value in txn.items():
+            if raw_key in mapped:
+                continue
+            mapped[raw_key] = "" if raw_value is None else str(raw_value).strip()
+        return mapped
 
     def _extract_batch_groups(self, payload):
         if isinstance(payload, dict):
@@ -1305,7 +1430,7 @@ class Application(tk.Tk):
 
     def _open_clipboard_column_settings(self):
         def on_save(col_defs):
-            self.clipboard_col_defs = list(col_defs)
+            self.clipboard_col_defs = _normalize_col_defs(col_defs)
             if self.status_bar:
                 self.status_bar.config(
                     text=f"{self._status_text()} | Copy columns saved ({len(col_defs)} columns)"
