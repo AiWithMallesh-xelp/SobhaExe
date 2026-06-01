@@ -29,6 +29,11 @@ import urllib.request
 from typing import Optional
 
 try:
+    from openpyxl import Workbook
+except ImportError:
+    Workbook = None
+
+try:
     import automation as automation_module
     AUTOMATION_IMPORT_ERROR = None
 except Exception as err:
@@ -81,6 +86,50 @@ HEADERS = [
 ]
 
 COL_WIDTHS = [50, 220, 140, 160, 140, 280, 180, 140, 360]
+
+# Columns exported when a batch is selected (Excel paste / clipboard).
+EXCEL_COL_DEFS = [
+    ("value_date", "Value Date"),
+    ("account", "Account"),
+    ("credit", "Credit"),
+    ("offset_account", "Offset Account"),
+    ("method_of_payment", "Method of Payment"),
+    ("reference_date", "Reference Date"),
+    ("payment_reference", "Payment Reference"),
+]
+
+
+def _excel_escape_cell(value) -> str:
+    text = str(value if value is not None else "")
+    if any(ch in text for ch in ('\t', '\n', '\r', '"')):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
+def build_excel_clipboard_text(transactions: list) -> str:
+    """Build tab-separated rows (Excel-ready) from transaction dicts."""
+    headers = [label for _key, label in EXCEL_COL_DEFS]
+    data_rows = [
+        [str(txn.get(key, "") or "") for key, _label in EXCEL_COL_DEFS]
+        for txn in transactions
+    ]
+
+    if Workbook is not None:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Transactions"
+        worksheet.append(headers)
+        for row in data_rows:
+            worksheet.append(row)
+        rows = list(worksheet.iter_rows(values_only=True))
+    else:
+        rows = [tuple(headers)] + [tuple(row) for row in data_rows]
+
+    lines = [
+        "\t".join(_excel_escape_cell(cell) for cell in row)
+        for row in rows
+    ]
+    return "\r\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +854,70 @@ class Application(tk.Tk):
                 return batch_info
         return None
 
+    def _transactions_for_batch(self, batch_info: dict) -> list:
+        return [
+            dict(record)
+            for sub_batch in batch_info.get("sub_batches", [])
+            for record in sub_batch.get("transactions", [])
+        ]
+
+    def _copy_batch_transactions_to_excel_clipboard(self, batch_info: dict) -> int:
+        transactions = self._transactions_for_batch(batch_info)
+        if not transactions:
+            return 0
+
+        clipboard_text = build_excel_clipboard_text(transactions)
+        self.clipboard_clear()
+        self.clipboard_append(clipboard_text)
+        self.update_idletasks()
+        return len(transactions)
+
+    def _copy_selected_batch_to_excel_clipboard(self) -> int:
+        self._sync_current_edits()
+        selected_group = self._selected_batch_group()
+        if selected_group is None:
+            return 0
+        return self._copy_batch_transactions_to_excel_clipboard(selected_group)
+
+    def _copy_batch_to_excel_clipboard(self, batch_info: dict) -> None:
+        self._sync_current_edits()
+        copied_count = self._copy_batch_transactions_to_excel_clipboard(batch_info)
+        if copied_count <= 0:
+            messagebox.showwarning("Copy", "No transactions to copy for this batch.")
+            return
+        if self.status_bar:
+            self.status_bar.config(
+                text=f"{self._status_text()} | Copied {copied_count} rows to clipboard (Excel)"
+            )
+
+    def _bind_copy_button_tooltip(self, widget: tk.Widget, text: str) -> None:
+        tooltip = {"window": None}
+
+        def show_tooltip(_event):
+            if tooltip["window"] is not None:
+                return
+            tip = tk.Toplevel(widget)
+            tip.wm_overrideredirect(True)
+            tip.wm_geometry(f"+{widget.winfo_rootx() + 24}+{widget.winfo_rooty() - 28}")
+            tk.Label(
+                tip,
+                text=text,
+                bg="#1f2937",
+                fg="white",
+                font=("Segoe UI", 9),
+                padx=8,
+                pady=4,
+            ).pack()
+            tooltip["window"] = tip
+
+        def hide_tooltip(_event):
+            if tooltip["window"] is not None:
+                tooltip["window"].destroy()
+                tooltip["window"] = None
+
+        widget.bind("<Enter>", show_tooltip)
+        widget.bind("<Leave>", hide_tooltip)
+
     def _refresh_match_counts(self):
         batch_count = len(self.batch_groups)
         sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in self.batch_groups)
@@ -856,14 +969,18 @@ class Application(tk.Tk):
                 self.row_count_label.config(text="0 batches | 0 sub-batches")
             return
 
+        col_weights = {
+            "value_date": 1,
+            "account": 1,
+            "credit": 1,
+            "offset_account": 2,
+            "method_of_payment": 1,
+            "reference_date": 1,
+            "payment_reference": 3,
+        }
         col_defs = [
-            ("value_date", "Value Date", 1),
-            ("account", "Account", 1),
-            ("credit", "Credit", 1),
-            ("offset_account", "Offset Account", 2),
-            ("method_of_payment", "Method", 1),
-            ("reference_date", "Reference Date", 1),
-            ("payment_reference", "Payment Reference", 3),
+            (key, label, col_weights.get(key, 1))
+            for key, label in EXCEL_COL_DEFS
         ]
 
         selected_batch_id = self.selected_batch_var.get().strip()
@@ -924,6 +1041,26 @@ class Application(tk.Tk):
                 font=("Segoe UI", 8),
                 anchor="w",
             ).pack(anchor="w")
+
+            if batch_selected:
+                copy_btn = tk.Button(
+                    header,
+                    text="\U0001f4cb",
+                    cursor="hand2",
+                    relief="flat",
+                    bg=self.colors["card_header_bg"],
+                    fg=self.colors["accent"],
+                    activebackground=self.colors["card_header_bg"],
+                    activeforeground="#1d4ed8",
+                    font=("Segoe UI Emoji", 13),
+                    padx=6,
+                    pady=0,
+                    borderwidth=0,
+                    highlightthickness=0,
+                    command=lambda bi=batch_info: self._copy_batch_to_excel_clipboard(bi),
+                )
+                copy_btn.pack(side="right", padx=(0, 4))
+                self._bind_copy_button_tooltip(copy_btn, "Copy all transactions to Excel (clipboard)")
 
             tk.Label(
                 header,
@@ -1227,6 +1364,7 @@ class Application(tk.Tk):
         self._apply_filter()
 
     def _select_all_visible_rows(self):
+        """Select the first batch if none is selected."""
         selected_group = self._selected_batch_group()
         if selected_group is None and self.batch_groups:
             self.selected_batch_var.set(str(self.batch_groups[0].get("batch_id", "")).strip())
@@ -1306,9 +1444,9 @@ class Application(tk.Tk):
             "auth_json_path": "~/.config/sobha-reconciliation/auth.json",
             "journal_name": "ARBR Customers Receipt",
             "browser_headless": False,
-            "browser_slow_mo_ms": 1000,
+            "browser_slow_mo_ms": 0,
             "page_load_timeout_ms": 60000,
-            "page_load_wait_seconds": 5,
+            "page_load_wait_seconds": 1,
             "post_click_timeout_ms": 300000,
             "manual_login_button_timeout_ms": 1800000,
         }

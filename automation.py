@@ -204,9 +204,9 @@ def _find_config_path() -> Path:
             "auth_json_path": str(DEFAULT_AUTH_JSON_PATH),
             "journal_name": "ARBR Customers Receipt",
             "browser_headless": False,
-            "browser_slow_mo_ms": 1000,
+            "browser_slow_mo_ms": 0,
             "page_load_timeout_ms": 60000,
-            "page_load_wait_seconds": 5,
+            "page_load_wait_seconds": 1,
             "post_click_timeout_ms": 300000,
             "manual_login_button_timeout_ms": 1800000,
         }
@@ -321,11 +321,14 @@ def _create_browser(playwright, *, headless: bool | None = None):
     viewport_size = f"{screen_w},{screen_h}"
     if headless is None:
         headless = CONFIG["browser_headless"]
-    browser = playwright.chromium.launch(
-        headless=headless,
-        slow_mo=CONFIG["browser_slow_mo_ms"],
-        args=[f"--window-size={viewport_size}"],
-    )
+    launch_kwargs = {
+        "headless": headless,
+        "args": [f"--window-size={viewport_size}"],
+    }
+    slow_mo = int(CONFIG.get("browser_slow_mo_ms", 0) or 0)
+    if slow_mo > 0:
+        launch_kwargs["slow_mo"] = slow_mo
+    browser = playwright.chromium.launch(**launch_kwargs)
     return browser, screen_w, screen_h
 
 
@@ -696,11 +699,12 @@ def _open_journal_lines(page):
     page.locator("#JournalName_3_0_0").get_by_role("button", name="Open").click()
     page.get_by_role("row", name=CONFIG["journal_name"], exact=True).get_by_label("Name").click()
     page.get_by_role("button", name="Lines", exact=True).click()
+    _wait_for_journal_grid_ready(page)
 
 
 def _extract_voucher_values(page):
     voucher_values = []
-    max_retries = 20
+    max_retries = 8
     for _ in range(max_retries):
         voucher_values = page.evaluate(
             """
@@ -722,8 +726,216 @@ def _extract_voucher_values(page):
         )
         if voucher_values:
             break
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(500)
     return voucher_values
+
+
+_ACCOUNT_INPUT_SEL = 'input[id^="LedgerJournalTrans_AccountNum_"][id$="_input"]'
+
+
+def _journal_line_rows(page):
+    """tbody rows that contain a journal account field."""
+    return page.locator("tbody tr").filter(has=page.locator(_ACCOUNT_INPUT_SEL))
+
+
+def _resolve_journal_row_index(page, row_index: int) -> int:
+    """Pick grid row index: prefer selected/current, else nth line, else last empty account row."""
+    resolved = page.evaluate(
+        """
+        (rowIndex) => {
+            const isVisible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (st.visibility === 'hidden' || st.display === 'none') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            };
+            const accountSel = "input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']";
+            const trs = [...document.querySelectorAll('tbody tr')].filter((tr) => {
+                const inp = tr.querySelector(accountSel);
+                return inp && isVisible(tr);
+            });
+            if (!trs.length) return 0;
+
+            const selected = document.querySelector("tr[aria-selected='true'], tr[aria-current='true']");
+            if (selected && isVisible(selected)) {
+                const selectedIdx = trs.indexOf(selected);
+                if (selectedIdx >= 0) return selectedIdx;
+            }
+
+            for (let i = trs.length - 1; i >= 0; i--) {
+                const inp = trs[i].querySelector(accountSel);
+                if (!inp || inp.readOnly) continue;
+                if (!(inp.value || '').trim()) return i;
+            }
+            if (rowIndex < trs.length) return rowIndex;
+            return trs.length - 1;
+        }
+        """,
+        row_index,
+    )
+    return int(resolved)
+
+
+def _journal_grid_row(page, row_index: int):
+    """Locator for the journal line row to fill (by index, selection, or empty new line)."""
+    rows = _journal_line_rows(page)
+    count = rows.count()
+    if count == 0:
+        return page.locator("tbody tr").first
+
+    pick = _resolve_journal_row_index(page, row_index)
+    if pick < count:
+        return rows.nth(pick)
+    return rows.nth(count - 1)
+
+
+def _scroll_journal_row_into_view(row) -> None:
+    try:
+        row.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
+        row.page.wait_for_timeout(150)
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+
+
+def _journal_field_locator(page, row_index: int, *, aria_label: str | None = None, css: str | None = None):
+    """Resolve an editable input scoped to the correct journal grid row."""
+    if css:
+        base_sel = css
+        editable_sel = f"{css}:not([readonly])"
+    else:
+        base_sel = f'input[aria-label="{aria_label}"]'
+        editable_sel = f'{base_sel}:not([readonly])'
+
+    row = _journal_grid_row(page, row_index)
+    _scroll_journal_row_into_view(row)
+    for sel in (editable_sel, base_sel):
+        field = row.locator(sel)
+        if field.count() > 0:
+            return field.first
+
+    fields = page.locator(editable_sel)
+    if fields.count() == 0:
+        fields = page.locator(base_sel)
+    count = fields.count()
+    if count == 0:
+        raise PlaywrightError(f"No journal field found for row {row_index + 1}.")
+    pick = min(row_index, count - 1)
+    return fields.nth(pick)
+
+
+def _wait_for_journal_grid_ready(page, timeout_ms: int | None = None) -> None:
+    """Wait until journal line grid inputs are rendered after opening Lines."""
+    if timeout_ms is None:
+        timeout_ms = int(CONFIG.get("page_load_timeout_ms", 60000))
+    page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']").first.wait_for(
+        state="visible",
+        timeout=timeout_ms,
+    )
+    try:
+        page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        pass
+    page.wait_for_timeout(300)
+
+
+def _focus_new_journal_line(page, row_index: int) -> None:
+    """Activate the journal line for row_index so editable inputs are targeted."""
+    row = _journal_grid_row(page, row_index)
+    _scroll_journal_row_into_view(row)
+    account = row.locator(f"{_ACCOUNT_INPUT_SEL}:not([readonly])")
+    if account.count() == 0:
+        account = row.locator(_ACCOUNT_INPUT_SEL)
+    account = account.first
+    try:
+        account.scroll_into_view_if_needed(timeout=5000)
+        try:
+            account.click(timeout=5000)
+        except PlaywrightError:
+            account.click(force=True, timeout=5000)
+        page.wait_for_timeout(100)
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+
+
+def _fill_text_field(locator, value: str) -> None:
+    """Clear and fill a D365 field, then Tab to commit lookup/combobox values."""
+    try:
+        locator.evaluate(
+            "el => { el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); }"
+        )
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+    try:
+        locator.scroll_into_view_if_needed(timeout=5000)
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+    try:
+        locator.click(timeout=10000)
+    except PlaywrightError:
+        locator.click(force=True, timeout=10000)
+    locator.press("Control+A")
+    locator.press("Backspace")
+    locator.fill(str(value))
+    locator.press("Tab")
+
+
+def _fill_text_field_with_retry(locator, value: str) -> None:
+    """Fill field and retry once if input_value does not match expected."""
+    expected = str(value).strip()
+    _fill_text_field(locator, expected)
+    try:
+        current = (locator.input_value() or "").strip()
+        if current and current.casefold() != expected.casefold():
+            _fill_text_field(locator, expected)
+    except PlaywrightError:
+        pass
+
+
+def _dismiss_d365_validation_dialog(page) -> None:
+    """Close D365 'information not valid' modal if it blocks New."""
+    for label in ("Close", "OK"):
+        try:
+            button = page.get_by_role("button", name=label)
+            if button.count() == 0:
+                continue
+            button.first.click(timeout=2000)
+            page.wait_for_timeout(200)
+            return
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+
+
+def _finalize_journal_line_before_new(
+    page,
+    row_index: int,
+    ref_date_loc,
+    ref_date: str,
+    pay_method: str,
+) -> None:
+    """Re-apply reference date and method of payment so D365 accepts the line before New."""
+    expected_ref = str(ref_date).strip()
+    try:
+        current_ref = (ref_date_loc.input_value() or "").strip()
+        if not current_ref or current_ref != expected_ref:
+            _fill_text_field_with_retry(ref_date_loc, expected_ref)
+            print(f"Finalized reference date: {expected_ref}")
+    except Exception as err:
+        print(f"Warning: Could not finalize reference date: {err}")
+
+    try:
+        paym_mode_input = _journal_field_locator(
+            page,
+            row_index,
+            css='input[aria-label="Method of payment"]:not([id^="Sel_"])',
+        )
+        _fill_text_field_with_retry(paym_mode_input, pay_method)
+        print(f"Re-filled method of payment at end: {pay_method}")
+    except Exception as err:
+        print(f"Warning: Could not finalize method of payment: {err}")
+
+    page.wait_for_timeout(250)
+    _dismiss_d365_validation_dialog(page)
 
 
 def _wait_for_post_click(page):
@@ -1045,11 +1257,13 @@ def _process_sub_batch(page, records):
         print(f"Processing record {idx + 1}/{len(records)}")
         force_manual_wipe_before_fill = False
         if idx > 0 and not reuse_same_row_next:
+            _dismiss_d365_validation_dialog(page)
             try:
                 page.get_by_role("button", name=" New").click()
             except PlaywrightError:
                 page.get_by_role("button", name=" New").first.click()
-            time.sleep(0.5)
+            page.wait_for_timeout(150)
+            _focus_new_journal_line(page, idx)
 
         def _verify_row_clear_state():
             try:
@@ -1093,21 +1307,21 @@ def _process_sub_batch(page, records):
                 return False
 
         def _clear_current_row_fields_fallback():
-            value_date_clear = page.get_by_role("combobox", name="Value date")
-            credit_clear = page.get_by_role("textbox", name="Credit")
-            ref_date_clear = page.get_by_role("combobox", name="Reference date")
-            pay_ref_clear = page.get_by_role("textbox", name="Payment reference")
-            account_clear = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
-            offset_account_clear = page.locator("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']")
-            method_clear = page.get_by_label("Method of payment")
-            if idx > 0:
-                value_date_clear = value_date_clear.first
-                credit_clear = credit_clear.first
-                ref_date_clear = ref_date_clear.first
-                pay_ref_clear = pay_ref_clear.first
-                account_clear = account_clear.first
-                offset_account_clear = offset_account_clear.first
-                method_clear = method_clear.first
+            value_date_clear = _journal_field_locator(page, idx, aria_label="Value date")
+            credit_clear = _journal_field_locator(page, idx, aria_label="Credit")
+            ref_date_clear = _journal_field_locator(page, idx, aria_label="Reference date")
+            pay_ref_clear = _journal_field_locator(page, idx, aria_label="Payment reference")
+            account_clear = _journal_field_locator(
+                page, idx, css='input[id^="LedgerJournalTrans_AccountNum_"][id$="_input"]'
+            )
+            offset_account_clear = _journal_field_locator(
+                page, idx, css='input[id^="LedgerJournalTrans_OffsetAccount_"][id$="_input"]'
+            )
+            method_clear = _journal_field_locator(
+                page,
+                idx,
+                css='input[aria-label="Method of payment"]:not([id^="Sel_"])',
+            )
 
             def _wipe(locator):
                 try:
@@ -1133,7 +1347,7 @@ def _process_sub_batch(page, records):
             try:
                 fast_clear_ok = page.evaluate(
                     """
-                    () => {
+                    (rowIndex) => {
                         const isVisible = (el) => {
                             if (!el) return false;
                             const st = window.getComputedStyle(el);
@@ -1142,22 +1356,37 @@ def _process_sub_batch(page, records):
                             return r.width > 0 && r.height > 0;
                         };
 
-                        const accountInput = document.querySelector("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']");
-                        const rowCandidates = [
-                            document.querySelector("tr[aria-selected='true']"),
-                            document.querySelector("tr[aria-current='true']"),
-                            accountInput ? accountInput.closest('tr') : null
-                        ].filter(Boolean);
-                        const activeRow = rowCandidates.find(isVisible) || null;
+                        const accountSel = "input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']";
+                        const trs = [...document.querySelectorAll('tbody tr')].filter((tr) => {
+                            const inp = tr.querySelector(accountSel);
+                            return inp && isVisible(tr);
+                        });
+
+                        let activeRow = document.querySelector("tr[aria-selected='true'], tr[aria-current='true']");
+                        if (!activeRow || !isVisible(activeRow)) {
+                            for (let i = trs.length - 1; i >= 0; i--) {
+                                const inp = trs[i].querySelector(accountSel);
+                                if (!inp || inp.readOnly) continue;
+                                if (!(inp.value || '').trim()) {
+                                    activeRow = trs[i];
+                                    break;
+                                }
+                            }
+                        }
+                        if (!activeRow && trs.length) {
+                            const pick = rowIndex < trs.length ? rowIndex : trs.length - 1;
+                            activeRow = trs[pick];
+                        }
 
                         const pickInput = (selector) => {
-                            const scoped = activeRow ? [...activeRow.querySelectorAll(selector)] : [];
-                            const global = [...document.querySelectorAll(selector)];
-                            const all = [...scoped, ...global];
-                            return all.find((el) => {
-                                const id = el.id || '';
-                                return isVisible(el) && !id.startsWith('Sel_');
-                            }) || null;
+                            if (activeRow) {
+                                const scoped = [...activeRow.querySelectorAll(selector)].find((el) => {
+                                    const id = el.id || '';
+                                    return isVisible(el) && !id.startsWith('Sel_') && !el.readOnly;
+                                });
+                                if (scoped) return scoped;
+                            }
+                            return null;
                         };
 
                         const clearValue = (selector) => {
@@ -1180,7 +1409,8 @@ def _process_sub_batch(page, records):
                         ];
                         return changed.some(Boolean);
                     }
-                    """
+                    """,
+                    idx,
                 )
                 if not fast_clear_ok:
                     print("Fast clear did not target row fields; using fallback clear.")
@@ -1208,31 +1438,28 @@ def _process_sub_batch(page, records):
         if not acc_no:
             raise ValueError(f"Missing account in record {idx + 1}; refusing implicit fallback account.")
 
-        value_date_loc = page.get_by_role("combobox", name="Value date")
-        credit_loc = page.get_by_role("textbox", name="Credit")
-        ref_date_loc = page.get_by_role("combobox", name="Reference date")
-        pay_ref_loc = page.get_by_role("textbox", name="Payment reference")
-        if idx > 0:
-            value_date_loc = value_date_loc.first
-            credit_loc = credit_loc.first
-            ref_date_loc = ref_date_loc.first
-            pay_ref_loc = pay_ref_loc.first
-
-        # Locate offset account field
-        offset_account_field = page.locator("input[id^='LedgerJournalTrans_OffsetAccount_'][id$='_input']")
-        if idx > 0:
-            offset_account_field = offset_account_field.first
+        value_date_loc = _journal_field_locator(page, idx, aria_label="Value date")
+        credit_loc = _journal_field_locator(page, idx, aria_label="Credit")
+        ref_date_loc = _journal_field_locator(page, idx, aria_label="Reference date")
+        pay_ref_loc = _journal_field_locator(page, idx, aria_label="Payment reference")
+        offset_account_field = _journal_field_locator(
+            page, idx, css='input[id^="LedgerJournalTrans_OffsetAccount_"][id$="_input"]'
+        )
+        paym_mode_input = _journal_field_locator(
+            page,
+            idx,
+            css='input[aria-label="Method of payment"]:not([id^="Sel_"])',
+        )
 
         if force_manual_wipe_before_fill:
             print(f"[{time.time():.3f}] Continue path: starting manual row wipe before fill.")
-            for loc in (pay_ref_loc, value_date_loc, credit_loc, ref_date_loc):
+            for loc in (pay_ref_loc, value_date_loc, credit_loc, ref_date_loc, paym_mode_input):
                 try:
                     loc.click()
                     loc.press("Control+A")
                     loc.press("Backspace")
                 except Exception:
                     pass
-            # Also clear offset account
             try:
                 offset_account_field.click()
                 offset_account_field.press("Control+A")
@@ -1240,151 +1467,34 @@ def _process_sub_batch(page, records):
             except Exception:
                 pass
 
-        pay_ref_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                pay_ref_loc.press("Control+A")
-                pay_ref_loc.press("Backspace")
-            except Exception:
-                pass
-        pay_ref_loc.press_sequentially(pay_ref, delay=100)
+        account_field = _journal_field_locator(
+            page, idx, css='input[id^="LedgerJournalTrans_AccountNum_"][id$="_input"]'
+        )
+        account_field.wait_for(
+            state="visible",
+            timeout=int(CONFIG.get("page_load_timeout_ms", 60000)),
+        )
+        _fill_text_field_with_retry(account_field, acc_no)
 
-        value_date_loc.press_sequentially(val_date, delay=200)
+        _fill_text_field_with_retry(value_date_loc, val_date)
+        _fill_text_field_with_retry(pay_ref_loc, pay_ref)
+        _fill_text_field(credit_loc, credit_amt)
 
-        account_field = page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']")
-        if idx > 0:
-            account_field = account_field.first
-        account_field.wait_for(state="visible", timeout=200)
-        account_field.click()
-        account_field.press("Control+A")
-        account_field.press("Backspace")
-        account_field.press_sequentially(acc_no, delay=20)
-
-        try:
-            entered_account = (account_field.input_value() or "").strip()
-            if entered_account and entered_account.casefold() != acc_no.casefold():
-                account_field.click()
-                account_field.press("Control+A")
-                account_field.press("Backspace")
-                account_field.press_sequentially(acc_no, delay=20)
-        except PlaywrightError:
-            pass
-
-        credit_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                credit_loc.press("Control+A")
-                credit_loc.press("Backspace")
-            except Exception:
-                pass
-        credit_loc.press_sequentially(credit_amt, delay=200)
-
-        # Fill Offset account field
         if offset_acc:
             try:
                 offset_account_field.wait_for(state="visible", timeout=5000)
-                offset_account_field.click()
-                offset_account_field.press("Control+A")
-                offset_account_field.press("Backspace")
-                offset_account_field.press_sequentially(offset_acc, delay=20)
+                _fill_text_field_with_retry(offset_account_field, offset_acc)
                 print(f"Filled offset account: {offset_acc}")
             except Exception as err:
                 print(f"Warning: Could not fill offset account '{offset_acc}': {err}")
 
-        paym_mode_input = page.get_by_label("Method of payment")
-        if idx > 0:
-            paym_mode_input = paym_mode_input.first
-        if force_manual_wipe_before_fill:
-            try:
-                paym_mode_input.click(force=True)
-                paym_mode_input.press("Control+A")
-                paym_mode_input.press("Backspace")
-            except Exception:
-                pass
-
-        def _select_method_of_payment(force=False):
-            try:
-                current_method = (paym_mode_input.input_value() or "").strip().lower()
-                if not force and current_method == str(pay_method).strip().lower():
-                    return
-            except Exception:
-                pass
-            try:
-                paym_mode_input.scroll_into_view_if_needed(timeout=5000)
-            except (PlaywrightTimeoutError, PlaywrightError):
-                pass
-            paym_mode_input.click(force=True)
-            paym_mode_input.press("Alt+ArrowDown")
-            method_selected = False
-            method_exact = page.locator(
-                f"input[aria-label='Method of payment'][id^='Sel_'][title='{pay_method}']"
-            )
-            if method_exact.count() > 0:
-                method_exact.first.click()
-                method_selected = True
-            if not method_selected:
-                try:
-                    page.evaluate(
-                        """
-                        (method) => {
-                            const target = [...document.querySelectorAll(
-                                "input[aria-label='Method of payment'][id^='Sel_']"
-                            )].find(el => {
-                                const txt = (el.getAttribute('title') || el.value || '').trim().toLowerCase();
-                                return txt === String(method).trim().toLowerCase();
-                            });
-                            if (!target) throw new Error(`Method not found in dropdown: ${method}`);
-                            target.click();
-                        }
-                        """,
-                        pay_method,
-                    )
-                    method_selected = True
-                except Exception:
-                    pass
-            if not method_selected:
-                try:
-                    page.evaluate(
-                        """
-                        () => {
-                            const el = document.querySelector("input[aria-label='Method of payment']");
-                            if (el) { el.scrollIntoView({block: 'center'}); el.click(); }
-                        }
-                        """
-                    )
-                except Exception as err:
-                    print(f"Warning: Method of payment all fallbacks failed for '{pay_method}': {err}")
-
-        _select_method_of_payment(force=False)
-
-        ref_date_loc.click()
-        if force_manual_wipe_before_fill:
-            try:
-                ref_date_loc.press("Control+A")
-                ref_date_loc.press("Backspace")
-            except Exception:
-                pass
-        ref_date_loc.press_sequentially(ref_date, delay=200)
-        try:
-            current_ref_val = ref_date_loc.input_value().strip()
-            if not current_ref_val:
-                ref_date_loc.click()
-                ref_date_loc.press_sequentially(ref_date, delay=200)
-        except Exception:
-            pass
+        _fill_text_field_with_retry(ref_date_loc, ref_date)
 
         try:
-            value_date_loc.fill(val_date)
-            current_value_date = value_date_loc.input_value().strip()
-            if current_value_date != val_date:
-                value_date_loc.click()
-                value_date_loc.press("Control+A")
-                value_date_loc.press("Backspace")
-                value_date_loc.press_sequentially(val_date, delay=40)
-        except Exception:
-            pass
-
-        _select_method_of_payment(force=True)
+            _fill_text_field_with_retry(paym_mode_input, pay_method)
+            print(f"Filled method of payment: {pay_method}")
+        except Exception as err:
+            print(f"Warning: Could not fill method of payment '{pay_method}': {err}")
 
         try:
             current_pay_ref = (pay_ref_loc.input_value() or "").strip()
@@ -1394,13 +1504,13 @@ def _process_sub_batch(page, records):
         if not current_pay_ref:
             print("Payment reference is empty before Save. Refilling and reapplying method.")
             try:
-                pay_ref_loc.click()
-                pay_ref_loc.press("Control+A")
-                pay_ref_loc.press("Backspace")
-                pay_ref_loc.press_sequentially(pay_ref, delay=120)
+                _fill_text_field_with_retry(pay_ref_loc, pay_ref)
             except PlaywrightError as err:
                 print(f"Warning: Could not refill Payment reference '{pay_ref}': {err}")
-            _select_method_of_payment(force=True)
+            try:
+                _fill_text_field_with_retry(paym_mode_input, pay_method)
+            except Exception as err:
+                print(f"Warning: Could not refill method of payment '{pay_method}': {err}")
 
             try:
                 current_pay_ref = (pay_ref_loc.input_value() or "").strip()
@@ -1577,6 +1687,7 @@ def _process_sub_batch(page, records):
                 _clear_current_row_fields_fast()
                 continue
 
+        _finalize_journal_line_before_new(page, idx, ref_date_loc, ref_date, pay_method)
         iterated_records.append(record)
         print(f"Prepared record {idx + 1}/{len(records)}. Save/Post will run after all rows.")
 
