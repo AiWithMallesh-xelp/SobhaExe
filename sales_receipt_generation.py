@@ -87,8 +87,8 @@ HEADERS = [
 
 COL_WIDTHS = [50, 220, 140, 160, 140, 280, 180, 140, 360]
 
-# Columns exported when a batch is selected (Excel paste / clipboard).
-EXCEL_COL_DEFS = [
+# Columns shown in the batch transaction table.
+DISPLAY_COL_DEFS = [
     ("value_date", "Value Date"),
     ("account", "Account"),
     ("credit", "Credit"),
@@ -98,6 +98,77 @@ EXCEL_COL_DEFS = [
     ("payment_reference", "Payment Reference"),
 ]
 
+# Full D365 column order for Excel paste / clipboard copy (defaults).
+DEFAULT_CLIPBOARD_COL_DEFS = [
+    ("date", "Date"),
+    ("value_date", "Value date"),
+    ("voucher", "Voucher"),
+    ("company", "Company"),
+    ("account", "Account"),
+    ("account_name", "Account name"),
+    ("payee_name", "Payee name"),
+    ("invoice", "Invoice"),
+    ("description", "Description"),
+    ("debit", "Debit"),
+    ("credit", "Credit"),
+    ("currency", "Currency"),
+    ("sales_order_id", "Sales order id"),
+    ("bank_account", "Bank account"),
+    ("offset_account_type", "Offset account type"),
+    ("offset_account", "Offset account"),
+    ("method_of_payment", "Method of payment"),
+    ("payment_status", "Payment status"),
+    ("demand_number", "Demand number"),
+    ("reference_date", "Reference date"),
+    ("payment_reference", "Payment reference"),
+    ("use_deposit_slip", "Use a deposit slip"),
+    ("crm_transaction_type", "CRM transaction type"),
+    ("original_payment_voucher", "Original Payment Voucher"),
+    ("reversal_payment_voucher", "Reversal Payment Voucher"),
+]
+
+TRANSACTION_FIELD_KEYS = [key for key, _label in DEFAULT_CLIPBOARD_COL_DEFS]
+TRANSACTION_FIELD_LABELS = {key: label for key, label in DEFAULT_CLIPBOARD_COL_DEFS}
+
+
+def _clipboard_columns_path() -> Path:
+    env_path = os.environ.get("SOBHA_CLIPBOARD_COLUMNS_PATH")
+    if env_path:
+        return Path(env_path).expanduser()
+    return Path.home() / ".config" / "sobha-reconciliation" / "clipboard_columns.json"
+
+
+def load_clipboard_col_defs() -> list:
+    defaults = list(DEFAULT_CLIPBOARD_COL_DEFS)
+    path = _clipboard_columns_path()
+    if not path.exists():
+        return defaults
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list) or not data:
+            return defaults
+        loaded = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key", "")).strip()
+            if not key:
+                continue
+            label = str(item.get("label", TRANSACTION_FIELD_LABELS.get(key, key))).strip() or key
+            loaded.append((key, label))
+        return loaded or defaults
+    except Exception:
+        return defaults
+
+
+def save_clipboard_col_defs(col_defs: list) -> None:
+    path = _clipboard_columns_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [{"key": key, "label": label} for key, label in col_defs]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
 
 def _excel_escape_cell(value) -> str:
     text = str(value if value is not None else "")
@@ -106,11 +177,12 @@ def _excel_escape_cell(value) -> str:
     return text
 
 
-def build_excel_clipboard_text(transactions: list) -> str:
+def build_excel_clipboard_text(transactions: list, col_defs: Optional[list] = None) -> str:
     """Build tab-separated rows (Excel-ready) from transaction dicts."""
-    headers = [label for _key, label in EXCEL_COL_DEFS]
+    columns = col_defs or load_clipboard_col_defs()
+    headers = [label for _key, label in columns]
     data_rows = [
-        [str(txn.get(key, "") or "") for key, _label in EXCEL_COL_DEFS]
+        [str(txn.get(key, "") or "") for key, _label in columns]
         for txn in transactions
     ]
 
@@ -130,6 +202,313 @@ def build_excel_clipboard_text(transactions: list) -> str:
         for row in rows
     ]
     return "\r\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Clipboard Column Settings Dialog
+# ---------------------------------------------------------------------------
+class ClipboardColumnSettingsDialog(tk.Toplevel):
+    def __init__(self, parent, col_defs: list, on_save=None):
+        super().__init__(parent)
+        self.title("Copy Column Settings")
+        self.geometry("760x620")
+        self.minsize(680, 520)
+        self.configure(bg="white")
+        self.on_save = on_save
+        self.row_items = []
+        self._colors = getattr(parent, "colors", {})
+
+        self.transient(parent)
+        self.grab_set()
+
+        main = tk.Frame(self, bg="white", padx=20, pady=16)
+        main.pack(fill="both", expand=True)
+
+        tk.Label(
+            main,
+            text="Copy Column Settings",
+            bg="white",
+            fg=self._colors.get("title", text_color),
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            main,
+            text="Reorder columns, rename headers, add or remove fields. Copy uses this layout.",
+            bg="white",
+            fg=self._colors.get("muted", "#6b7280"),
+            font=("Segoe UI", 9),
+            wraplength=700,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 12))
+
+        table_shell = tk.Frame(main, bg="#eef2f8", bd=0, highlightthickness=1, highlightbackground="#dfe4ee")
+        table_shell.pack(fill="both", expand=True)
+
+        header = tk.Frame(table_shell, bg="#f9fafd", pady=6)
+        header.pack(fill="x", padx=1, pady=(1, 0))
+        for col_idx, (text, width, anchor) in enumerate(
+            (("#", 36, "center"), ("Field", 180, "w"), ("Excel header", 280, "w"), ("Order", 120, "center"))
+        ):
+            header.grid_columnconfigure(col_idx, weight=1 if col_idx == 2 else 0)
+            tk.Label(
+                header,
+                text=text,
+                bg="#f9fafd",
+                fg="#6b7280",
+                font=("Segoe UI", 8, "bold"),
+                width=width // 8 if width else None,
+                anchor=anchor,
+            ).grid(row=0, column=col_idx, sticky="ew", padx=(10 if col_idx == 0 else 6, 6))
+
+        list_host = tk.Frame(table_shell, bg="white")
+        list_host.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+
+        self.list_canvas = tk.Canvas(list_host, bg="white", highlightthickness=0, bd=0)
+        list_scroll = ttk.Scrollbar(list_host, orient="vertical", command=self.list_canvas.yview)
+        self.list_canvas.configure(yscrollcommand=list_scroll.set)
+        list_scroll.pack(side="right", fill="y")
+        self.list_canvas.pack(side="left", fill="both", expand=True)
+
+        self.rows_frame = tk.Frame(self.list_canvas, bg="white")
+        self.list_canvas_window = self.list_canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
+        self.rows_frame.bind("<Configure>", self._on_rows_configure)
+        self.list_canvas.bind("<Configure>", self._on_canvas_configure)
+        self.list_canvas.bind("<Enter>", self._bind_mousewheel)
+        self.list_canvas.bind("<Leave>", self._unbind_mousewheel)
+
+        add_row = tk.Frame(main, bg="white")
+        add_row.pack(fill="x", pady=(10, 0))
+        tk.Label(add_row, text="Add field:", bg="white", fg=text_color, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.add_field_var = tk.StringVar()
+        self.add_field_cb = ttk.Combobox(add_row, textvariable=self.add_field_var, state="readonly", width=34)
+        self.add_field_cb.pack(side="left", padx=(8, 8))
+        tk.Button(
+            add_row,
+            text="Add",
+            command=self._add_selected_field,
+            bg="#eef2ff",
+            fg="#1d4ed8",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=12,
+            pady=4,
+            cursor="hand2",
+        ).pack(side="left")
+
+        footer = tk.Frame(main, bg="white")
+        footer.pack(fill="x", pady=(14, 0))
+        tk.Button(
+            footer,
+            text="Reset defaults",
+            command=self._reset_defaults,
+            bg="#f3f4f6",
+            fg="#374151",
+            relief="flat",
+            font=("Segoe UI", 9),
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        ).pack(side="left")
+        tk.Button(
+            footer,
+            text="Cancel",
+            command=self.destroy,
+            bg="white",
+            fg="#555",
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 9),
+            padx=14,
+            pady=5,
+            cursor="hand2",
+        ).pack(side="right", padx=(8, 0))
+        tk.Button(
+            footer,
+            text="Save",
+            command=self._save,
+            bg=accent_color,
+            fg="white",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        ).pack(side="right")
+
+        self._set_rows(col_defs)
+        self._center_window()
+
+    def _center_window(self):
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _on_rows_configure(self, _event):
+        self.list_canvas.configure(scrollregion=self.list_canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        self.list_canvas.itemconfigure(self.list_canvas_window, width=event.width)
+
+    def _bind_mousewheel(self, _event):
+        self.list_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.list_canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.list_canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, _event):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.list_canvas.unbind_all(seq)
+
+    def _on_mousewheel(self, event):
+        if event.num == 4:
+            delta = -1
+        elif event.num == 5:
+            delta = 1
+        else:
+            delta = int(event.delta / -120)
+        self.list_canvas.yview_scroll(delta, "units")
+
+    def _set_rows(self, col_defs: list):
+        for widget in self.rows_frame.winfo_children():
+            widget.destroy()
+        self.row_items = []
+        for index, (key, label) in enumerate(col_defs):
+            self._append_row(key, label, index + 1)
+        self._refresh_add_field_options()
+        self._on_rows_configure(None)
+
+    def _append_row(self, key: str, label: str, index: int):
+        row_bg = "#ffffff" if index % 2 else "#fcfdff"
+        row = tk.Frame(self.rows_frame, bg=row_bg, pady=4)
+        row.pack(fill="x")
+
+        tk.Label(
+            row,
+            text=str(index),
+            bg=row_bg,
+            fg="#6b7280",
+            font=("Segoe UI", 9),
+            width=4,
+            anchor="center",
+        ).grid(row=0, column=0, sticky="w", padx=(10, 6))
+
+        tk.Label(
+            row,
+            text=key,
+            bg=row_bg,
+            fg="#2e3b57",
+            font=("Segoe UI", 9),
+            width=24,
+            anchor="w",
+        ).grid(row=0, column=1, sticky="w", padx=(0, 8))
+
+        label_var = tk.StringVar(value=label)
+        tk.Entry(
+            row,
+            textvariable=label_var,
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=2, sticky="ew", padx=(0, 8))
+
+        actions = tk.Frame(row, bg=row_bg)
+        actions.grid(row=0, column=3, sticky="e", padx=(0, 8))
+        tk.Button(
+            actions,
+            text="↑",
+            command=lambda: self._move_row(key, -1),
+            width=2,
+            relief="flat",
+            bg="#eef2ff",
+            fg="#1d4ed8",
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 4))
+        tk.Button(
+            actions,
+            text="↓",
+            command=lambda: self._move_row(key, 1),
+            width=2,
+            relief="flat",
+            bg="#eef2ff",
+            fg="#1d4ed8",
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 4))
+        tk.Button(
+            actions,
+            text="✕",
+            command=lambda: self._remove_row(key),
+            width=2,
+            relief="flat",
+            bg="#fff0f0",
+            fg="#c0392b",
+            cursor="hand2",
+        ).pack(side="left")
+
+        row.grid_columnconfigure(2, weight=1)
+        self.row_items.append({"key": key, "label_var": label_var})
+
+    def _current_col_defs(self) -> list:
+        return [(item["key"], item["label_var"].get().strip() or item["key"]) for item in self.row_items]
+
+    def _refresh_add_field_options(self):
+        used = {item["key"] for item in self.row_items}
+        available = [
+            key for key in TRANSACTION_FIELD_KEYS if key not in used
+        ]
+        labels = [f"{key} ({TRANSACTION_FIELD_LABELS.get(key, key)})" for key in available]
+        self.add_field_cb["values"] = labels
+        if labels:
+            self.add_field_var.set(labels[0])
+        else:
+            self.add_field_var.set("")
+
+    def _add_selected_field(self):
+        selected = self.add_field_var.get().strip()
+        if not selected:
+            return
+        key = selected.split(" (", 1)[0].strip()
+        if not key or any(item["key"] == key for item in self.row_items):
+            return
+        default_label = TRANSACTION_FIELD_LABELS.get(key, key)
+        self.row_items.append({"key": key, "label_var": tk.StringVar(value=default_label)})
+        self._set_rows(self._current_col_defs())
+
+    def _move_row(self, key: str, direction: int):
+        keys = [item["key"] for item in self.row_items]
+        if key not in keys:
+            return
+        idx = keys.index(key)
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(keys):
+            return
+        col_defs = self._current_col_defs()
+        col_defs[idx], col_defs[new_idx] = col_defs[new_idx], col_defs[idx]
+        self._set_rows(col_defs)
+
+    def _remove_row(self, key: str):
+        if len(self.row_items) <= 1:
+            messagebox.showwarning("Copy Column Settings", "At least one column is required.")
+            return
+        col_defs = [(k, l) for k, l in self._current_col_defs() if k != key]
+        self._set_rows(col_defs)
+
+    def _reset_defaults(self):
+        if messagebox.askyesno("Reset defaults", "Restore default copy columns?"):
+            self._set_rows(list(DEFAULT_CLIPBOARD_COL_DEFS))
+
+    def _save(self):
+        col_defs = self._current_col_defs()
+        if not col_defs:
+            messagebox.showwarning("Copy Column Settings", "Add at least one column before saving.")
+            return
+        if any(not label for _key, label in col_defs):
+            messagebox.showwarning("Copy Column Settings", "Every column needs a header name.")
+            return
+        save_clipboard_col_defs(col_defs)
+        if callable(self.on_save):
+            self.on_save(col_defs)
+        self.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +815,7 @@ class Application(tk.Tk):
         self.login_button: Optional[tk.Button] = None
         self._auth_probe_serial = 0
         self._login_display_name: Optional[str] = None
+        self.clipboard_col_defs = load_clipboard_col_defs()
 
         # Professional Color Palette (modal/card style)
         self.colors = {
@@ -503,6 +883,20 @@ class Application(tk.Tk):
 
         top_actions = tk.Frame(toolbar, bg=self.colors["frame_bg"])
         top_actions.pack(side="right")
+        tk.Button(
+            top_actions,
+            text="⚙",
+            command=self._open_clipboard_column_settings,
+            cursor="hand2",
+            relief="flat",
+            bg=self.colors["pill_bg"],
+            fg=self.colors["title"],
+            activebackground="#d1d5db",
+            activeforeground=self.colors["title"],
+            font=("Segoe UI", 14),
+            padx=10,
+            pady=2,
+        ).pack(side="right", padx=(0, 8))
         self.login_button = tk.Button(
             top_actions,
             text="Login",
@@ -777,17 +1171,36 @@ class Application(tk.Tk):
         mapped_batch_id = str(txn.get("batch_id", "")).strip() or batch_id or "UNASSIGNED"
         mapped_sub_batch_id = str(txn.get("sub_batch_id", "")).strip() or sub_batch_id or mapped_batch_id
         account_date = str(txn.get("account_date", "")).strip()
+        payment_reference = str(txn.get("transaction_description", "")).strip()
         return {
             "uuid": str(txn.get("uuid", "")).strip(),
             "batch_id": mapped_batch_id,
             "sub_batch_id": mapped_sub_batch_id,
+            "date": account_date,
             "value_date": account_date,
+            "voucher": str(txn.get("receipt_number", "")).strip(),
+            "company": "",
             "account": str(txn.get("account_number", "")).strip(),
+            "account_name": "",
+            "payee_name": "",
+            "invoice": "",
+            "description": payment_reference,
+            "debit": "",
             "credit": self._sanitize_amount(txn.get("transaction_amount", "")),
+            "currency": "",
+            "sales_order_id": "",
+            "bank_account": "",
+            "offset_account_type": "",
             "offset_account": str(txn.get("offset_account", "")).strip(),
             "method_of_payment": str(txn.get("mode_of_transaction", "")).strip(),
+            "payment_status": "",
+            "demand_number": "",
             "reference_date": account_date,
-            "payment_reference": str(txn.get("transaction_description", "")).strip(),
+            "payment_reference": payment_reference,
+            "use_deposit_slip": "",
+            "crm_transaction_type": str(txn.get("txn_source", "")).strip(),
+            "original_payment_voucher": "",
+            "reversal_payment_voucher": "",
         }
 
     def _extract_batch_groups(self, payload):
@@ -866,7 +1279,7 @@ class Application(tk.Tk):
         if not transactions:
             return 0
 
-        clipboard_text = build_excel_clipboard_text(transactions)
+        clipboard_text = build_excel_clipboard_text(transactions, self.clipboard_col_defs)
         self.clipboard_clear()
         self.clipboard_append(clipboard_text)
         self.update_idletasks()
@@ -889,6 +1302,17 @@ class Application(tk.Tk):
             self.status_bar.config(
                 text=f"{self._status_text()} | Copied {copied_count} rows to clipboard (Excel)"
             )
+
+    def _open_clipboard_column_settings(self):
+        def on_save(col_defs):
+            self.clipboard_col_defs = list(col_defs)
+            if self.status_bar:
+                self.status_bar.config(
+                    text=f"{self._status_text()} | Copy columns saved ({len(col_defs)} columns)"
+                )
+
+        dlg = ClipboardColumnSettingsDialog(self, self.clipboard_col_defs, on_save=on_save)
+        self.wait_window(dlg)
 
     def _bind_copy_button_tooltip(self, widget: tk.Widget, text: str) -> None:
         tooltip = {"window": None}
@@ -980,7 +1404,7 @@ class Application(tk.Tk):
         }
         col_defs = [
             (key, label, col_weights.get(key, 1))
-            for key, label in EXCEL_COL_DEFS
+            for key, label in DISPLAY_COL_DEFS
         ]
 
         selected_batch_id = self.selected_batch_var.get().strip()
