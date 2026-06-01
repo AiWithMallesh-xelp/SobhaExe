@@ -160,7 +160,7 @@ window.addEventListener('DOMContentLoaded', () => {
      setTimeout(() => overlay.remove(), 800);
   }
 
-  document.addEventListener('click', (e) => {
+  window.__automationClickHandler = (e) => {
     const glow = document.createElement('div');
     glow.classList.add('click-glow-effect');
     glow.style.left = e.clientX + 'px';
@@ -168,7 +168,8 @@ window.addEventListener('DOMContentLoaded', () => {
     document.body.appendChild(glow);
     setTimeout(() => glow.remove(), 600);
     highlightElement(e.target);
-  }, true);
+  };
+  document.addEventListener('click', window.__automationClickHandler, true);
 
   window.__automationFocusHandler = (e) => highlightElement(e.target);
   window.__automationInputHandler = (e) => highlightElement(e.target);
@@ -176,21 +177,30 @@ window.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('input', window.__automationInputHandler, true);
 
   window.__automationDisableVisualEnhancements = () => {
-    document.querySelectorAll('.human-cursor').forEach((el) => el.remove());
+    document.querySelectorAll('.human-cursor, .click-glow-effect, .element-highlight-rect').forEach((el) => el.remove());
     if (window.__automationMouseMoveHandler) {
       document.removeEventListener('mousemove', window.__automationMouseMoveHandler);
+      window.__automationMouseMoveHandler = null;
     }
     if (window.__automationMouseDownHandler) {
       document.removeEventListener('mousedown', window.__automationMouseDownHandler);
+      window.__automationMouseDownHandler = null;
     }
     if (window.__automationMouseUpHandler) {
       document.removeEventListener('mouseup', window.__automationMouseUpHandler);
+      window.__automationMouseUpHandler = null;
+    }
+    if (window.__automationClickHandler) {
+      document.removeEventListener('click', window.__automationClickHandler, true);
+      window.__automationClickHandler = null;
     }
     if (window.__automationFocusHandler) {
       document.removeEventListener('focus', window.__automationFocusHandler, true);
+      window.__automationFocusHandler = null;
     }
     if (window.__automationInputHandler) {
       document.removeEventListener('input', window.__automationInputHandler, true);
+      window.__automationInputHandler = null;
     }
     window.__automationVisualEnhancementsDisabled = true;
   };
@@ -728,10 +738,13 @@ def probe_saved_session(headless: bool = True) -> dict:
 
 def _open_journal_lines(page):
     try:
-        page.get_by_role("button", name=" New").first.click()
+        page.get_by_role("button", name=" New").first.click(timeout=15000)
     except PlaywrightError:
-        page.get_by_role("button", name=" New").click()
-    page.locator("#JournalName_3_0_0").get_by_role("button", name="Open").click()
+        page.get_by_role("button", name=" New").click(timeout=15000)
+    page.wait_for_timeout(300)
+    open_btn = page.locator("#JournalName_3_0_0").get_by_role("button", name="Open")
+    open_btn.wait_for(state="visible", timeout=int(CONFIG.get("page_load_timeout_ms", 60000)))
+    open_btn.click()
     page.get_by_role("row", name=CONFIG["journal_name"], exact=True).get_by_label("Name").click()
     page.get_by_role("button", name="Lines", exact=True).click()
     _wait_for_journal_grid_ready(page)
@@ -1337,6 +1350,39 @@ def _refresh_for_next_batch(page):
     _wait_for_d365_ready(page, "refreshed page")
 
 
+def _return_to_journal_list(page) -> None:
+    """Navigate back to the customer payment journal list (not a posted popout)."""
+    d365_url = str(CONFIG.get("d365_url", "")).strip()
+    if not d365_url:
+        raise ValueError("d365_url is not configured.")
+    print("Returning to customer payment journal list...")
+    page.goto(
+        d365_url,
+        timeout=int(CONFIG.get("page_load_timeout_ms", 60000)),
+        wait_until="domcontentloaded",
+    )
+    _wait_for_d365_ready(page, "journal list")
+
+
+def _journal_lines_grid_visible(page) -> bool:
+    try:
+        page.locator("input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']").first.wait_for(
+            state="visible",
+            timeout=4000,
+        )
+        return True
+    except PlaywrightTimeoutError:
+        return False
+
+
+def _prepare_journal_lines_for_bulk_paste(page) -> None:
+    """Open a fresh journal lines grid for the next bulk paste batch."""
+    if _journal_lines_grid_visible(page):
+        print("Journal lines grid already visible; returning to list for a new journal.")
+    _return_to_journal_list(page)
+    _open_journal_lines(page)
+
+
 def _group_records_by_sub_batch(records):
     grouped = {}
     for record in records:
@@ -1366,12 +1412,19 @@ def _set_page_clipboard(page, text: str) -> None:
 
 
 def _disable_automation_visual_overlays(page) -> None:
-    """Remove fake cursor and highlight listeners so user can work normally."""
+    """Remove fake cursor, click glow, and highlight listeners for manual control."""
     page.evaluate(
         """
         () => {
             if (typeof window.__automationDisableVisualEnhancements === 'function') {
                 window.__automationDisableVisualEnhancements();
+            }
+            document.querySelectorAll(
+                '.human-cursor, .click-glow-effect, .element-highlight-rect'
+            ).forEach((el) => el.remove());
+            if (window.__automationClickHandler) {
+                document.removeEventListener('click', window.__automationClickHandler, true);
+                window.__automationClickHandler = null;
             }
         }
         """
@@ -1447,83 +1500,6 @@ def _wait_for_bulk_post_click(page):
         """
     )
     page.wait_for_function("window.postClicked === true", timeout=0)
-
-
-def _wait_for_bulk_refresh_gate(page, current_index: int, total_chunks: int) -> None:
-    heading = (
-        f"Batch {current_index} of {total_chunks} completed. "
-        "Please press Ctrl+R to refresh the page before the next paste batch."
-    )
-    body = "After refreshing, click Continue to paste the next batch."
-    page.evaluate(
-        """
-        ({heading, body}) => {
-            window.automationBulkRefreshContinue = false;
-            const oldWrap = document.getElementById('automation-bulk-refresh-gate');
-            if (oldWrap) oldWrap.remove();
-
-            const wrap = document.createElement('div');
-            wrap.id = 'automation-bulk-refresh-gate';
-            Object.assign(wrap.style, {
-                position: 'fixed',
-                top: '150px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: '2147483647',
-                width: 'min(720px, calc(100vw - 24px))',
-                boxSizing: 'border-box',
-                padding: '14px',
-                background: 'rgba(255,255,255,0.97)',
-                border: '1px solid rgba(17,24,39,0.16)',
-                borderRadius: '14px',
-                boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
-                fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
-                color: '#0f172a'
-            });
-
-            const title = document.createElement('div');
-            title.textContent = heading;
-            Object.assign(title.style, { fontSize: '14px', fontWeight: '700', lineHeight: '1.35' });
-            wrap.appendChild(title);
-
-            const text = document.createElement('div');
-            text.textContent = body;
-            Object.assign(text.style, { marginTop: '8px', fontSize: '13px', lineHeight: '1.35' });
-            wrap.appendChild(text);
-
-            const actions = document.createElement('div');
-            Object.assign(actions.style, {
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: '10px',
-                marginTop: '12px'
-            });
-
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = 'Continue';
-            Object.assign(button.style, {
-                padding: '10px 16px',
-                borderRadius: '12px',
-                border: '0',
-                background: '#2563eb',
-                color: '#fff',
-                fontWeight: '800',
-                fontSize: '13px',
-                cursor: 'pointer'
-            });
-            button.onclick = () => {
-                window.automationBulkRefreshContinue = true;
-                wrap.remove();
-            };
-            actions.appendChild(button);
-            wrap.appendChild(actions);
-            document.body.appendChild(wrap);
-        }
-        """,
-        {"heading": heading, "body": body},
-    )
-    page.wait_for_function("window.automationBulkRefreshContinue === true", timeout=0)
 
 
 def _show_all_completed_overlay(page) -> None:
@@ -1665,9 +1641,16 @@ def _process_bulk_paste_chunks(page, records, col_defs):
         all_processed.extend(chunk)
 
         if chunk_index < total_chunks:
-            _wait_for_bulk_refresh_gate(page, chunk_index, total_chunks)
-            _refresh_for_next_batch(page)
-            _open_journal_lines(page)
+            action = _wait_for_batch_action(
+                page,
+                is_last_sub_batch=False,
+                current_index=chunk_index,
+                total_sub_batches=total_chunks,
+            )
+            if action == "close":
+                print("User closed bulk paste before next chunk.")
+                break
+            _prepare_journal_lines_for_bulk_paste(page)
 
     _show_all_completed_overlay(page)
     print(f"Bulk paste completed for {len(all_processed)} records.")
@@ -2181,7 +2164,8 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
             except (PlaywrightError, OSError, ValueError) as err:
                 print(f"Auth state unavailable, starting a fresh context: {err}")
                 context = _create_context(browser, screen_w, screen_h, use_storage_state=False)
-            context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
+            if not bulk_paste_mode:
+                context.add_init_script(VISUAL_ENHANCEMENT_SCRIPT)
             page = context.new_page()
 
             print("Navigating to D365...")
