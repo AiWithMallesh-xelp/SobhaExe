@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import json
 import os
-import re
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -33,6 +33,19 @@ try:
     from openpyxl import Workbook
 except ImportError:
     Workbook = None
+
+from clipboard_export import (
+    DEFAULT_CLIPBOARD_COL_DEFS,
+    PRESET_FIELD_KEYS,
+    PRESET_FIELD_LABELS,
+    TRANSACTION_FIELD_LABELS,
+    build_excel_clipboard_text,
+    load_clipboard_col_defs,
+    normalize_col_def,
+    normalize_col_defs,
+    save_clipboard_col_defs,
+    slug_custom_field_key,
+)
 
 try:
     import automation as automation_module
@@ -98,167 +111,6 @@ DISPLAY_COL_DEFS = [
     ("reference_date", "Reference Date"),
     ("payment_reference", "Payment Reference"),
 ]
-
-# Full D365 column order for Excel paste / clipboard copy (defaults).
-DEFAULT_CLIPBOARD_COL_DEFS = [
-    ("date", "Date"),
-    ("value_date", "Value date"),
-    ("voucher", "Voucher"),
-    ("company", "Company"),
-    ("account", "Account"),
-    ("account_name", "Account name"),
-    ("payee_name", "Payee name"),
-    ("invoice", "Invoice"),
-    ("description", "Description"),
-    ("debit", "Debit"),
-    ("credit", "Credit"),
-    ("currency", "Currency"),
-    ("sales_order_id", "Sales order id"),
-    ("bank_account", "Bank account"),
-    ("offset_account_type", "Offset account type"),
-    ("offset_account", "Offset account"),
-    ("method_of_payment", "Method of payment"),
-    ("payment_status", "Payment status"),
-    ("demand_number", "Demand number"),
-    ("reference_date", "Reference date"),
-    ("payment_reference", "Payment reference"),
-    ("use_deposit_slip", "Use a deposit slip"),
-    ("crm_transaction_type", "CRM transaction type"),
-    ("original_payment_voucher", "Original Payment Voucher"),
-    ("reversal_payment_voucher", "Reversal Payment Voucher"),
-]
-
-TRANSACTION_FIELD_KEYS = [key for key, _label in DEFAULT_CLIPBOARD_COL_DEFS]
-TRANSACTION_FIELD_LABELS = {key: label for key, label in DEFAULT_CLIPBOARD_COL_DEFS}
-
-# Extra API / internal fields users can add from the preset list.
-EXTRA_FIELD_LABELS = {
-    "transaction_uuid": "Transaction UUID (API)",
-    "account_date": "Account date (API)",
-    "account_number": "Account number (API)",
-    "transaction_amount": "Transaction amount (API)",
-    "transaction_description": "Transaction description (API)",
-    "mode_of_transaction": "Mode of transaction (API)",
-    "receipt_number": "Receipt number (API)",
-    "txn_source": "Txn source (API)",
-    "created_at": "Created at (API)",
-    "updated_at": "Updated at (API)",
-    "created_by": "Created by (API)",
-}
-PRESET_FIELD_LABELS = {**TRANSACTION_FIELD_LABELS, **EXTRA_FIELD_LABELS}
-PRESET_FIELD_KEYS = list(dict.fromkeys(TRANSACTION_FIELD_KEYS + list(EXTRA_FIELD_LABELS)))
-
-
-def _normalize_col_def(item) -> dict:
-    if isinstance(item, dict):
-        key = str(item.get("key", "")).strip()
-        label = str(item.get("label", TRANSACTION_FIELD_LABELS.get(key, key))).strip() or key
-        return {
-            "key": key,
-            "label": label,
-            "default_value": str(item.get("default_value", "") or ""),
-        }
-    if isinstance(item, (list, tuple)) and len(item) >= 2:
-        key = str(item[0]).strip()
-        label = str(item[1]).strip() or key
-        default_value = str(item[2]).strip() if len(item) > 2 else ""
-        return {"key": key, "label": label, "default_value": default_value}
-    raise ValueError("Invalid column definition")
-
-
-def _normalize_col_defs(col_defs: list) -> list:
-    normalized = []
-    for item in col_defs:
-        col = _normalize_col_def(item)
-        if col.get("key"):
-            normalized.append(col)
-    return normalized
-
-
-def _slug_custom_field_key(header: str, used_keys: set) -> str:
-    base = re.sub(r"[^a-z0-9]+", "_", header.strip().lower()).strip("_") or "custom_field"
-    if not base.startswith("custom_"):
-        base = f"custom_{base}"
-    candidate = base
-    suffix = 2
-    while candidate in used_keys:
-        candidate = f"{base}_{suffix}"
-        suffix += 1
-    return candidate
-
-
-def _resolve_clipboard_cell(txn: dict, col: dict) -> str:
-    key = col.get("key", "")
-    value = txn.get(key, "")
-    if value is None or str(value).strip() == "":
-        return str(col.get("default_value", "") or "")
-    return str(value)
-
-
-def _clipboard_columns_path() -> Path:
-    env_path = os.environ.get("SOBHA_CLIPBOARD_COLUMNS_PATH")
-    if env_path:
-        return Path(env_path).expanduser()
-    return Path.home() / ".config" / "sobha-reconciliation" / "clipboard_columns.json"
-
-
-def load_clipboard_col_defs() -> list:
-    defaults = [_normalize_col_def(item) for item in DEFAULT_CLIPBOARD_COL_DEFS]
-    path = _clipboard_columns_path()
-    if not path.exists():
-        return defaults
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, list) or not data:
-            return defaults
-        loaded = _normalize_col_defs(data)
-        return loaded or defaults
-    except Exception:
-        return defaults
-
-
-def save_clipboard_col_defs(col_defs: list) -> None:
-    path = _clipboard_columns_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [_normalize_col_def(item) for item in col_defs]
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-
-
-def _excel_escape_cell(value) -> str:
-    text = str(value if value is not None else "")
-    if any(ch in text for ch in ('\t', '\n', '\r', '"')):
-        return '"' + text.replace('"', '""') + '"'
-    return text
-
-
-def build_excel_clipboard_text(transactions: list, col_defs: Optional[list] = None) -> str:
-    """Build tab-separated rows (Excel-ready) from transaction dicts."""
-    columns = _normalize_col_defs(col_defs or load_clipboard_col_defs())
-    headers = [col["label"] for col in columns]
-    data_rows = [
-        [_resolve_clipboard_cell(txn, col) for col in columns]
-        for txn in transactions
-    ]
-
-    if Workbook is not None:
-        workbook = Workbook()
-        worksheet = workbook.active
-        worksheet.title = "Transactions"
-        worksheet.append(headers)
-        for row in data_rows:
-            worksheet.append(row)
-        rows = list(worksheet.iter_rows(values_only=True))
-    else:
-        rows = [tuple(headers)] + [tuple(row) for row in data_rows]
-
-    lines = [
-        "\t".join(_excel_escape_cell(cell) for cell in row)
-        for row in rows
-    ]
-    return "\r\n".join(lines)
-
 
 # ---------------------------------------------------------------------------
 # Clipboard Column Settings Dialog
@@ -457,7 +309,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         for widget in self.rows_frame.winfo_children():
             widget.destroy()
         self.row_items = []
-        normalized = _normalize_col_defs(col_defs)
+        normalized = normalize_col_defs(col_defs)
         for index, col in enumerate(normalized):
             self._append_row(col, index + 1)
         self._refresh_add_field_options()
@@ -587,7 +439,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             return
         default_value = self.custom_default_var.get().strip()
         used = {item["key"] for item in self.row_items}
-        key = _slug_custom_field_key(header, used)
+        key = slug_custom_field_key(header, used)
         col_defs = self._current_col_defs()
         col_defs.append({"key": key, "label": header, "default_value": default_value})
         self._set_rows(col_defs)
@@ -615,7 +467,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
 
     def _reset_defaults(self):
         if messagebox.askyesno("Reset defaults", "Restore default copy columns?"):
-            self._set_rows([_normalize_col_def(item) for item in DEFAULT_CLIPBOARD_COL_DEFS])
+            self._set_rows([normalize_col_def(item) for item in DEFAULT_CLIPBOARD_COL_DEFS])
 
     def _save(self):
         col_defs = self._current_col_defs()
@@ -936,6 +788,7 @@ class Application(tk.Tk):
         self._auth_probe_serial = 0
         self._login_display_name: Optional[str] = None
         self.clipboard_col_defs = load_clipboard_col_defs()
+        self.bulk_paste_mode_var = tk.BooleanVar(value=self._load_bulk_paste_mode_default())
 
         # Professional Color Palette (modal/card style)
         self.colors = {
@@ -1050,6 +903,18 @@ class Application(tk.Tk):
 
         secondary_actions = tk.Frame(content, bg=self.colors["frame_bg"])
         secondary_actions.pack(fill="x", pady=(0, 8))
+        tk.Checkbutton(
+            secondary_actions,
+            text="Bulk paste mode",
+            variable=self.bulk_paste_mode_var,
+            command=self._persist_bulk_paste_mode,
+            bg=self.colors["frame_bg"],
+            activebackground=self.colors["frame_bg"],
+            fg=self.colors["title"],
+            selectcolor="white",
+            font=("Segoe UI", 10),
+            cursor="hand2",
+        ).pack(side="right", padx=(0, 12))
         tk.Button(
             secondary_actions,
             text="Make Automation",
@@ -1430,7 +1295,7 @@ class Application(tk.Tk):
 
     def _open_clipboard_column_settings(self):
         def on_save(col_defs):
-            self.clipboard_col_defs = _normalize_col_defs(col_defs)
+            self.clipboard_col_defs = normalize_col_defs(col_defs)
             if self.status_bar:
                 self.status_bar.config(
                     text=f"{self._status_text()} | Copy columns saved ({len(col_defs)} columns)"
@@ -1759,15 +1624,10 @@ class Application(tk.Tk):
     def _confirm_automation_dialog(self, batch_id: str, sub_batch_count: int, transaction_count: int) -> bool:
         dlg = tk.Toplevel(self)
         dlg.title("Confirm Automation")
-        dlg.geometry("620x320")
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#eef2f8")
-        dlg.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - 620) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - 320) // 2
-        dlg.geometry(f"+{x}+{y}")
 
         card = tk.Frame(
             dlg,
@@ -1780,8 +1640,11 @@ class Application(tk.Tk):
         )
         card.pack(fill="both", expand=True, padx=14, pady=14)
 
+        content = tk.Frame(card, bg="white")
+        content.pack(fill="both", expand=True)
+
         tk.Label(
-            card,
+            content,
             text="Are you sure to Proceed Automation?",
             bg="white",
             fg=self.colors["title"],
@@ -1793,9 +1656,13 @@ class Application(tk.Tk):
             ("Main Batch", batch_id),
             ("Sub-Batches", str(sub_batch_count)),
             ("Transactions", str(transaction_count)),
+            ("Bulk paste mode", "ON" if self.bulk_paste_mode_var.get() else "OFF"),
         ]
+        if self.bulk_paste_mode_var.get():
+            chunk_count = max(1, math.ceil(transaction_count / 20)) if transaction_count else 0
+            summary_rows.append(("Paste batches (20 rows)", str(chunk_count)))
         for label, value in summary_rows:
-            row = tk.Frame(card, bg="white")
+            row = tk.Frame(content, bg="white")
             row.pack(fill="x", pady=(0, 6))
             tk.Label(
                 row,
@@ -1803,7 +1670,7 @@ class Application(tk.Tk):
                 bg="white",
                 fg=self.colors["muted"],
                 font=("Segoe UI", 10, "bold"),
-                width=14,
+                width=20,
                 anchor="w",
             ).pack(side="left")
             tk.Label(
@@ -1813,20 +1680,22 @@ class Application(tk.Tk):
                 fg=self.colors["title"],
                 font=("Segoe UI", 10),
                 anchor="w",
-            ).pack(side="left")
+                wraplength=360,
+                justify="left",
+            ).pack(side="left", fill="x", expand=True)
 
         tk.Label(
-            card,
+            content,
             text="Please confirm to continue.",
             bg="white",
             fg=self.colors["muted"],
             font=("Segoe UI", 10),
             anchor="w",
-        ).pack(fill="x", pady=(10, 18))
+        ).pack(fill="x", pady=(10, 12))
 
         result = {"ok": False}
         btn_row = tk.Frame(card, bg="white", pady=6)
-        btn_row.pack(fill="x")
+        btn_row.pack(fill="x", side="bottom")
 
         def on_confirm():
             result["ok"] = True
@@ -1838,7 +1707,7 @@ class Application(tk.Tk):
 
         tk.Button(
             btn_row,
-            text="Proceed",
+            text="Continue",
             command=on_confirm,
             cursor="hand2",
             relief="flat",
@@ -1865,6 +1734,13 @@ class Application(tk.Tk):
             padx=22,
             pady=9,
         ).pack(side="right", padx=(0, 10))
+
+        dlg.update_idletasks()
+        dlg_w = max(620, card.winfo_reqwidth() + 28)
+        dlg_h = max(380, card.winfo_reqheight() + 28)
+        x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
+        dlg.geometry(f"{dlg_w}x{dlg_h}+{x}+{y}")
 
         dlg.wait_window()
         return result["ok"]
@@ -1952,7 +1828,39 @@ class Application(tk.Tk):
         if self._confirm_automation_dialog(batch_id, sub_batch_count, transaction_count):
             if not self._validate_config_for_action(require_auth_state=True):
                 return
-            threading.Thread(target=self._run_automation, args=(selected,), daemon=True).start()
+            bulk_mode = self.bulk_paste_mode_var.get()
+            col_defs = list(self.clipboard_col_defs)
+            threading.Thread(
+                target=self._run_automation,
+                args=(selected, bulk_mode, col_defs),
+                daemon=True,
+            ).start()
+
+    def _load_bulk_paste_mode_default(self) -> bool:
+        try:
+            config_path = self._resolve_config_path()
+            if config_path.exists():
+                with open(config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "bulk_paste_mode" in data:
+                    return bool(data["bulk_paste_mode"])
+        except Exception:
+            pass
+        return True
+
+    def _persist_bulk_paste_mode(self):
+        try:
+            config_path = self._resolve_config_path()
+            self._ensure_config_file_exists(config_path)
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+            data["bulk_paste_mode"] = bool(self.bulk_paste_mode_var.get())
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as err:
+            print(f"Could not save bulk_paste_mode to config: {err}")
 
     def _open_receipt_dialog(self, row_data):
         dlg = SalesAccReceiptGenDialog(self, row_data,
@@ -2183,15 +2091,30 @@ class Application(tk.Tk):
         threading.Thread(target=install_task, daemon=True).start()
 
     # ---- Automation thread (kept for integration) ----
-    def _run_automation(self, data):
+    def _run_automation(self, data, bulk_paste_mode=True, clipboard_col_defs=None):
         try:
             if automation_module is None:
                 raise ImportError(f"automation module import failed: {AUTOMATION_IMPORT_ERROR}")
             print("--- Automation Started ---")
-            automation_module.test_final8(data)
+            automation_module.test_final8(
+                data,
+                bulk_paste_mode=bulk_paste_mode,
+                clipboard_col_defs=clipboard_col_defs,
+            )
             print("--- Automation Finished ---")
-            self.after(0, lambda: messagebox.showinfo("Success",
-                                                       "Automation completed successfully."))
+            if bulk_paste_mode:
+                self.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Success",
+                        "All transactions completed.\nBrowser left open — close it when done.",
+                    ),
+                )
+            else:
+                self.after(
+                    0,
+                    lambda: messagebox.showinfo("Success", "Automation completed successfully."),
+                )
         except ImportError:
             self.after(0, lambda: messagebox.showerror(
                 "Error", "automation module not found."))

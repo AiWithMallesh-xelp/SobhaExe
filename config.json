@@ -4,5 +4,6 @@
     "browser_headless": false,
     "browser_slow_mo_ms": 0,
     "page_load_timeout_ms": 60000,
-    "page_load_wait_seconds": 1
+    "page_load_wait_seconds": 1,
+    "bulk_paste_mode": true
 }

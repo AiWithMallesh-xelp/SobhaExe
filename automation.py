@@ -66,6 +66,15 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(DEFAULT_PLAYWRIGHT_BROWSER
 
 DEFAULT_BULK_UPDATE_URL = "https://uat-sobha.docuxray.ai/api/prePost/bulkUpdateReceipt"
 
+BULK_PASTE_BATCH_SIZE = 20
+
+try:
+    from clipboard_export import build_paste_clipboard_text, load_clipboard_col_defs, normalize_col_defs
+except ImportError:
+    build_paste_clipboard_text = None
+    load_clipboard_col_defs = None
+    normalize_col_defs = None
+
 VISUAL_ENHANCEMENT_SCRIPT = '''
 window.addEventListener('DOMContentLoaded', () => {
   const style = document.createElement('style');
@@ -121,18 +130,22 @@ window.addEventListener('DOMContentLoaded', () => {
   cursor.classList.add('human-cursor');
   document.body.appendChild(cursor);
 
-  document.addEventListener('mousemove', (e) => {
+  window.__automationMouseMoveHandler = (e) => {
     cursor.style.left = e.clientX + 'px';
     cursor.style.top = e.clientY + 'px';
-  });
-
-  document.addEventListener('mousedown', () => {
+  };
+  window.__automationMouseDownHandler = () => {
     cursor.style.transform = 'translate(-2px, -2px) scale(0.85)';
-  });
-
-  document.addEventListener('mouseup', () => {
+  };
+  window.__automationMouseUpHandler = () => {
     cursor.style.transform = 'translate(-2px, -2px) scale(1)';
-  });
+  };
+
+  document.addEventListener('mousemove', window.__automationMouseMoveHandler);
+
+  document.addEventListener('mousedown', window.__automationMouseDownHandler);
+
+  document.addEventListener('mouseup', window.__automationMouseUpHandler);
 
   function highlightElement(target) {
      if (!target || !target.getBoundingClientRect) return;
@@ -157,8 +170,30 @@ window.addEventListener('DOMContentLoaded', () => {
     highlightElement(e.target);
   }, true);
 
-  document.addEventListener('focus', (e) => highlightElement(e.target), true);
-  document.addEventListener('input', (e) => highlightElement(e.target), true);
+  window.__automationFocusHandler = (e) => highlightElement(e.target);
+  window.__automationInputHandler = (e) => highlightElement(e.target);
+  document.addEventListener('focus', window.__automationFocusHandler, true);
+  document.addEventListener('input', window.__automationInputHandler, true);
+
+  window.__automationDisableVisualEnhancements = () => {
+    document.querySelectorAll('.human-cursor').forEach((el) => el.remove());
+    if (window.__automationMouseMoveHandler) {
+      document.removeEventListener('mousemove', window.__automationMouseMoveHandler);
+    }
+    if (window.__automationMouseDownHandler) {
+      document.removeEventListener('mousedown', window.__automationMouseDownHandler);
+    }
+    if (window.__automationMouseUpHandler) {
+      document.removeEventListener('mouseup', window.__automationMouseUpHandler);
+    }
+    if (window.__automationFocusHandler) {
+      document.removeEventListener('focus', window.__automationFocusHandler, true);
+    }
+    if (window.__automationInputHandler) {
+      document.removeEventListener('input', window.__automationInputHandler, true);
+    }
+    window.__automationVisualEnhancementsDisabled = true;
+  };
 });
 '''
 
@@ -839,6 +874,70 @@ def _wait_for_journal_grid_ready(page, timeout_ms: int | None = None) -> None:
     page.wait_for_timeout(300)
 
 
+def _focus_journal_row_for_paste(page, row_index: int = 0) -> None:
+    """Focus the leftmost grid cell (Date column) so paste aligns with D365 column order."""
+    row = _journal_grid_row(page, row_index)
+    _scroll_journal_row_into_view(row)
+    resolved_index = _resolve_journal_row_index(page, row_index)
+
+    clicked = page.evaluate(
+        """
+        (rowIndex) => {
+            const isVisible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (st.visibility === 'hidden' || st.display === 'none') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            };
+            const accountSel = "input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']";
+            const trs = [...document.querySelectorAll('tbody tr')].filter((tr) => {
+                const inp = tr.querySelector(accountSel);
+                return inp && isVisible(tr);
+            });
+            const row = trs[rowIndex] || trs[0];
+            if (!row) return false;
+
+            const dateInput = row.querySelector('input[aria-label="Date"]:not([readonly])')
+                || row.querySelector('input[aria-label="Date"]');
+            if (dateInput && isVisible(dateInput)) {
+                dateInput.scrollIntoView({ block: 'center', inline: 'start' });
+                dateInput.focus();
+                dateInput.click();
+                return true;
+            }
+
+            const inputs = [...row.querySelectorAll('input:not([readonly])')]
+                .filter(isVisible)
+                .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+            if (!inputs.length) return false;
+            inputs[0].scrollIntoView({ block: 'center', inline: 'start' });
+            inputs[0].focus();
+            inputs[0].click();
+            return true;
+        }
+        """,
+        resolved_index,
+    )
+
+    if not clicked:
+        for aria_label in ("Date", "Value date"):
+            try:
+                field = _journal_field_locator(page, row_index, aria_label=aria_label)
+                field.click(timeout=5000)
+                clicked = True
+                break
+            except (PlaywrightError, PlaywrightTimeoutError):
+                continue
+
+    page.wait_for_timeout(150)
+    try:
+        page.keyboard.press("Home")
+        page.wait_for_timeout(100)
+    except PlaywrightError:
+        pass
+
+
 def _focus_new_journal_line(page, row_index: int) -> None:
     """Activate the journal line for row_index so editable inputs are targeted."""
     row = _journal_grid_row(page, row_index)
@@ -1246,6 +1345,333 @@ def _group_records_by_sub_batch(records):
         key = sub_batch_id or batch_id or "sub_batch_1"
         grouped.setdefault(key, []).append(record)
     return list(grouped.items())
+
+
+def _chunk_records(records, size=BULK_PASTE_BATCH_SIZE):
+    chunks = []
+    for idx in range(0, len(records), size):
+        chunks.append(records[idx: idx + size])
+    return chunks
+
+
+def _set_page_clipboard(page, text: str) -> None:
+    escaped = json.dumps(text)
+    page.evaluate(
+        f"""
+        async () => {{
+            await navigator.clipboard.writeText({escaped});
+        }}
+        """
+    )
+
+
+def _disable_automation_visual_overlays(page) -> None:
+    """Remove fake cursor and highlight listeners so user can work normally."""
+    page.evaluate(
+        """
+        () => {
+            if (typeof window.__automationDisableVisualEnhancements === 'function') {
+                window.__automationDisableVisualEnhancements();
+            }
+        }
+        """
+    )
+
+
+def _show_bulk_paste_toast(page, duration_ms: int = 3000) -> None:
+    page.evaluate(
+        """
+        (durationMs) => {
+            const oldNotice = document.getElementById('automation-paste-toast');
+            if (oldNotice) oldNotice.remove();
+
+            const notice = document.createElement('div');
+            notice.id = 'automation-paste-toast';
+            notice.innerHTML = `
+              <div style="font-weight:800; font-size:14px; line-height:1.2;">Data pasted</div>
+              <div style="font-weight:600; font-size:13px; line-height:1.35; opacity:0.95; margin-top:4px;">
+                Review rows, then click <span style="font-weight:900;">Post</span>.
+              </div>
+            `;
+            Object.assign(notice.style, {
+                position: 'fixed',
+                top: '150px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: '2147483647',
+                width: 'min(720px, calc(100vw - 24px))',
+                boxSizing: 'border-box',
+                padding: '12px 14px',
+                background: 'rgba(11, 95, 255, 0.92)',
+                color: '#fff',
+                borderRadius: '14px',
+                fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
+                transition: 'opacity 0.35s ease'
+            });
+            document.body.appendChild(notice);
+            setTimeout(() => {
+                notice.style.opacity = '0';
+                setTimeout(() => notice.remove(), 350);
+            }, durationMs);
+        }
+        """,
+        duration_ms,
+    )
+
+
+def _wait_for_bulk_post_click(page):
+    page.evaluate(
+        """
+        () => {
+            window.postClicked = false;
+            const oldNotice = document.getElementById('automation-post-notice');
+            if (oldNotice) oldNotice.remove();
+
+            if (window.__postHandler) {
+                document.removeEventListener('click', window.__postHandler, true);
+            }
+            window.__postHandler = function postHandler(e) {
+                const el = e.target;
+                const txt = (el && (el.innerText || el.textContent)) ? (el.innerText || el.textContent) : '';
+                if (txt && txt.trim() === 'Post') {
+                    window.postClicked = true;
+                }
+                const btn = el && el.closest ? el.closest('button') : null;
+                if (btn && btn.innerText && btn.innerText.trim() === 'Post') {
+                    window.postClicked = true;
+                }
+            };
+            document.addEventListener('click', window.__postHandler, true);
+        }
+        """
+    )
+    page.wait_for_function("window.postClicked === true", timeout=0)
+
+
+def _wait_for_bulk_refresh_gate(page, current_index: int, total_chunks: int) -> None:
+    heading = (
+        f"Batch {current_index} of {total_chunks} completed. "
+        "Please press Ctrl+R to refresh the page before the next paste batch."
+    )
+    body = "After refreshing, click Continue to paste the next batch."
+    page.evaluate(
+        """
+        ({heading, body}) => {
+            window.automationBulkRefreshContinue = false;
+            const oldWrap = document.getElementById('automation-bulk-refresh-gate');
+            if (oldWrap) oldWrap.remove();
+
+            const wrap = document.createElement('div');
+            wrap.id = 'automation-bulk-refresh-gate';
+            Object.assign(wrap.style, {
+                position: 'fixed',
+                top: '150px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: '2147483647',
+                width: 'min(720px, calc(100vw - 24px))',
+                boxSizing: 'border-box',
+                padding: '14px',
+                background: 'rgba(255,255,255,0.97)',
+                border: '1px solid rgba(17,24,39,0.16)',
+                borderRadius: '14px',
+                boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                color: '#0f172a'
+            });
+
+            const title = document.createElement('div');
+            title.textContent = heading;
+            Object.assign(title.style, { fontSize: '14px', fontWeight: '700', lineHeight: '1.35' });
+            wrap.appendChild(title);
+
+            const text = document.createElement('div');
+            text.textContent = body;
+            Object.assign(text.style, { marginTop: '8px', fontSize: '13px', lineHeight: '1.35' });
+            wrap.appendChild(text);
+
+            const actions = document.createElement('div');
+            Object.assign(actions.style, {
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                marginTop: '12px'
+            });
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = 'Continue';
+            Object.assign(button.style, {
+                padding: '10px 16px',
+                borderRadius: '12px',
+                border: '0',
+                background: '#2563eb',
+                color: '#fff',
+                fontWeight: '800',
+                fontSize: '13px',
+                cursor: 'pointer'
+            });
+            button.onclick = () => {
+                window.automationBulkRefreshContinue = true;
+                wrap.remove();
+            };
+            actions.appendChild(button);
+            wrap.appendChild(actions);
+            document.body.appendChild(wrap);
+        }
+        """,
+        {"heading": heading, "body": body},
+    )
+    page.wait_for_function("window.automationBulkRefreshContinue === true", timeout=0)
+
+
+def _show_all_completed_overlay(page) -> None:
+    page.evaluate(
+        """
+        () => {
+            window.automationAllCompleted = false;
+            const oldWrap = document.getElementById('automation-all-completed');
+            if (oldWrap) oldWrap.remove();
+
+            const wrap = document.createElement('div');
+            wrap.id = 'automation-all-completed';
+            Object.assign(wrap.style, {
+                position: 'fixed',
+                top: '150px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: '2147483647',
+                width: 'min(720px, calc(100vw - 24px))',
+                boxSizing: 'border-box',
+                padding: '14px',
+                background: 'rgba(255,255,255,0.97)',
+                border: '1px solid rgba(17,24,39,0.16)',
+                borderRadius: '14px',
+                boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                color: '#0f172a'
+            });
+
+            const title = document.createElement('div');
+            title.textContent = 'All transactions completed';
+            Object.assign(title.style, { fontSize: '15px', fontWeight: '800', lineHeight: '1.35' });
+            wrap.appendChild(title);
+
+            const text = document.createElement('div');
+            text.textContent = 'You can close this browser window when finished.';
+            Object.assign(text.style, { marginTop: '8px', fontSize: '13px', lineHeight: '1.35' });
+            wrap.appendChild(text);
+
+            const actions = document.createElement('div');
+            Object.assign(actions.style, {
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                marginTop: '12px'
+            });
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = 'OK';
+            Object.assign(button.style, {
+                padding: '10px 16px',
+                borderRadius: '12px',
+                border: '0',
+                background: '#16a34a',
+                color: '#fff',
+                fontWeight: '800',
+                fontSize: '13px',
+                cursor: 'pointer'
+            });
+            button.onclick = () => {
+                window.automationAllCompleted = true;
+                wrap.remove();
+            };
+            actions.appendChild(button);
+            wrap.appendChild(actions);
+            document.body.appendChild(wrap);
+        }
+        """
+    )
+    page.wait_for_function("window.automationAllCompleted === true", timeout=0)
+
+
+def _extract_chunk_voucher_values(page, chunk_size: int):
+    voucher_values = _extract_voucher_values(page)
+    if len(voucher_values) >= chunk_size:
+        return voucher_values[-chunk_size:]
+    return voucher_values
+
+
+def _paste_bulk_chunk(page, records, col_defs) -> None:
+    if build_paste_clipboard_text is None:
+        raise RuntimeError("clipboard_export module is not available.")
+    paste_text = build_paste_clipboard_text(records, col_defs)
+    col_count = paste_text.split("\r\n")[0].count("\t") + 1 if paste_text else 0
+    print(f"Bulk paste: {len(records)} rows x {col_count} columns (starting at Date column).")
+    _focus_journal_row_for_paste(page, 0)
+    _set_page_clipboard(page, paste_text)
+    page.keyboard.press("Control+V")
+    page.wait_for_timeout(400)
+
+    expected_rows = len(records)
+    for _ in range(30):
+        row_count = _journal_line_rows(page).count()
+        if row_count >= expected_rows:
+            break
+        page.wait_for_timeout(300)
+    print(
+        f"Bulk paste applied for {expected_rows} rows "
+        f"(grid rows visible: {_journal_line_rows(page).count()})."
+    )
+
+
+def _process_bulk_paste_chunks(page, records, col_defs):
+    chunks = _chunk_records(records, BULK_PASTE_BATCH_SIZE)
+    if not chunks:
+        print("No records to process in bulk paste mode.")
+        return []
+
+    all_processed = []
+    total_chunks = len(chunks)
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        print(
+            f"Starting bulk paste chunk {chunk_index}/{total_chunks} "
+            f"({len(chunk)} transactions)"
+        )
+        _paste_bulk_chunk(page, chunk, col_defs)
+        _disable_automation_visual_overlays(page)
+        _show_bulk_paste_toast(page, 3000)
+        _wait_for_bulk_post_click(page)
+        _wait_for_post_confirmation(page)
+
+        try:
+            page.get_by_text("List General Payment fee Bank").click()
+        except PlaywrightError as err:
+            print(f"Warning: Could not return to voucher list view: {err}")
+
+        voucher_values = _extract_chunk_voucher_values(page, len(chunk))
+        print(f"Chunk {chunk_index} vouchers: {voucher_values}")
+        if len(voucher_values) != len(chunk):
+            print(
+                "Warning: Voucher count does not match chunk size "
+                f"({len(voucher_values)} vs {len(chunk)}). "
+                "Patching will use minimum count by order."
+            )
+        ok, patch_msg = _bulk_update_receipts(chunk, voucher_values)
+        print(f"bulkUpdateReceipt chunk {chunk_index}: {'OK' if ok else 'SKIP/FAIL'}")
+        print(patch_msg)
+        all_processed.extend(chunk)
+
+        if chunk_index < total_chunks:
+            _wait_for_bulk_refresh_gate(page, chunk_index, total_chunks)
+            _refresh_for_next_batch(page)
+            _open_journal_lines(page)
+
+    _show_all_completed_overlay(page)
+    print(f"Bulk paste completed for {len(all_processed)} records.")
+    return all_processed
 
 
 def _process_sub_batch(page, records):
@@ -1710,7 +2136,7 @@ def _process_sub_batch(page, records):
     return processed_records
 
 
-def test_final8(records=None):
+def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
     issues = get_config_issues(require_auth_state=True)
     if issues:
         raise ValueError("Configuration issue(s):\n- " + "\n- ".join(issues))
@@ -1736,14 +2162,14 @@ def test_final8(records=None):
             "sub_batch_id": "DEFAULT_BATCH_1",
         }]
 
-    print(f"Starting automation with {len(records)} records...")
+    mode_label = "bulk paste" if bulk_paste_mode else "legacy fill"
+    print(f"Starting automation ({mode_label}) with {len(records)} records...")
     if not sync_playwright:
         print("Playwright is not installed. Skipping automation.")
         raise RuntimeError("Playwright is not installed.")
 
     batch_id = str(records[0].get("batch_id", "")).strip() or "UNASSIGNED"
-    sub_batch_groups = _group_records_by_sub_batch(records)
-    print(f"Main batch {batch_id} contains {len(sub_batch_groups)} sub-batches.")
+    keep_browser_open = bulk_paste_mode
 
     with sync_playwright() as playwright:
         browser = None
@@ -1766,51 +2192,82 @@ def test_final8(records=None):
             )
             _wait_for_d365_ready(page)
 
-            total_sub_batches = len(sub_batch_groups)
-            for sub_batch_index, (sub_batch_id, sub_batch_records) in enumerate(sub_batch_groups, start=1):
+            if bulk_paste_mode:
+                if normalize_col_defs is None or build_paste_clipboard_text is None:
+                    raise RuntimeError("clipboard_export module is required for bulk paste mode.")
+                col_defs = normalize_col_defs(clipboard_col_defs or load_clipboard_col_defs())
+                try:
+                    context.grant_permissions(
+                        ["clipboard-read", "clipboard-write"],
+                        origin=page.url,
+                    )
+                except Exception as err:
+                    print(f"Warning: Could not grant clipboard permissions: {err}")
+                chunk_count = len(_chunk_records(records, BULK_PASTE_BATCH_SIZE))
                 print(
-                    f"Starting sub-batch {sub_batch_index}/{total_sub_batches}: "
-                    f"{sub_batch_id} ({len(sub_batch_records)} transactions)"
+                    f"Bulk paste mode: {len(records)} records in {chunk_count} "
+                    f"batch(es) of up to {BULK_PASTE_BATCH_SIZE}."
                 )
                 _open_journal_lines(page)
-                processed_records = _process_sub_batch(page, sub_batch_records)
+                _process_bulk_paste_chunks(page, records, col_defs)
+            else:
+                sub_batch_groups = _group_records_by_sub_batch(records)
+                print(f"Main batch {batch_id} contains {len(sub_batch_groups)} sub-batches.")
+                total_sub_batches = len(sub_batch_groups)
+                for sub_batch_index, (sub_batch_id, sub_batch_records) in enumerate(sub_batch_groups, start=1):
+                    print(
+                        f"Starting sub-batch {sub_batch_index}/{total_sub_batches}: "
+                        f"{sub_batch_id} ({len(sub_batch_records)} transactions)"
+                    )
+                    _open_journal_lines(page)
+                    processed_records = _process_sub_batch(page, sub_batch_records)
 
-                if processed_records:
-                    try:
-                        page.get_by_text("List General Payment fee Bank").click()
-                    except PlaywrightError as err:
-                        print(f"Warning: Could not return to voucher list view: {err}")
-                    voucher_values = _extract_voucher_values(page)
-                    print(voucher_values)
-                    if len(voucher_values) != len(processed_records):
-                        print(
-                            "Warning: Voucher count does not match processed record count "
-                            f"({len(voucher_values)} vs {len(processed_records)}). "
-                            "Patching will use minimum count by order."
-                        )
-                    ok, patch_msg = _bulk_update_receipts(processed_records, voucher_values)
-                    print(f"bulkUpdateReceipt status for {sub_batch_id}: {'OK' if ok else 'SKIP/FAIL'}")
-                    print(patch_msg)
-                else:
-                    print(f"Sub-batch {sub_batch_id} produced no processed records; skipping PATCH.")
+                    if processed_records:
+                        try:
+                            page.get_by_text("List General Payment fee Bank").click()
+                        except PlaywrightError as err:
+                            print(f"Warning: Could not return to voucher list view: {err}")
+                        voucher_values = _extract_voucher_values(page)
+                        print(voucher_values)
+                        if len(voucher_values) != len(processed_records):
+                            print(
+                                "Warning: Voucher count does not match processed record count "
+                                f"({len(voucher_values)} vs {len(processed_records)}). "
+                                "Patching will use minimum count by order."
+                            )
+                        ok, patch_msg = _bulk_update_receipts(processed_records, voucher_values)
+                        print(f"bulkUpdateReceipt status for {sub_batch_id}: {'OK' if ok else 'SKIP/FAIL'}")
+                        print(patch_msg)
+                    else:
+                        print(f"Sub-batch {sub_batch_id} produced no processed records; skipping PATCH.")
 
-                is_last_sub_batch = sub_batch_index == total_sub_batches
-                action = _wait_for_batch_action(
-                    page,
-                    is_last_sub_batch=is_last_sub_batch,
-                    current_index=sub_batch_index,
-                    total_sub_batches=total_sub_batches,
-                )
-                if action == "close":
-                    break
-                _refresh_for_next_batch(page)
+                    is_last_sub_batch = sub_batch_index == total_sub_batches
+                    action = _wait_for_batch_action(
+                        page,
+                        is_last_sub_batch=is_last_sub_batch,
+                        current_index=sub_batch_index,
+                        total_sub_batches=total_sub_batches,
+                    )
+                    if action == "close":
+                        break
+                    _refresh_for_next_batch(page)
 
             _persist_storage_state(context)
+            if keep_browser_open and browser is not None:
+                print("Waiting for user to close the browser...")
+                try:
+                    while browser.is_connected():
+                        page.wait_for_timeout(1000)
+                except Exception:
+                    pass
         finally:
-            if context is not None:
-                context.close()
-            if browser is not None:
-                browser.close()
+            if keep_browser_open:
+                print("Bulk paste completed — browser closed by user.")
+            else:
+                if context is not None:
+                    context.close()
+                if browser is not None:
+                    browser.close()
 
 def test_loginfunctionality():
     issues = get_config_issues(require_auth_state=False)
