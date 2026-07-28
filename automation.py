@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 try:
     from playwright.sync_api import (
         sync_playwright,
@@ -350,36 +352,30 @@ def update_user_runtime_config(d365_url: str | None = None, journal_name: str | 
 
 
 def _get_browser_dimensions() -> tuple[int, int]:
-    # Use a near-fullscreen viewport to avoid opening in a cramped/half-screen size.
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        screen_w = max(1280, int(root.winfo_screenwidth() * 0.96))
-        screen_h = max(720, int(root.winfo_screenheight() * 0.9))
-    finally:
-        root.destroy()
-    return screen_w, screen_h
+    """Return standard 1440x900 viewport dimensions for D365 automation.
+
+    Avoids over-zooming / distorted scaling on macOS Retina displays.
+    """
+    return 1440, 900
 
 
 def _create_browser(playwright, *, headless: bool | None = None):
-    screen_w, screen_h = _get_browser_dimensions()
-    viewport_size = f"{screen_w},{screen_h}"
     if headless is None:
         headless = CONFIG["browser_headless"]
     launch_kwargs = {
         "headless": headless,
-        "args": [f"--window-size={viewport_size}"],
+        "args": ["--start-maximized"],
     }
     slow_mo = int(CONFIG.get("browser_slow_mo_ms", 0) or 0)
     if slow_mo > 0:
         launch_kwargs["slow_mo"] = slow_mo
     browser = playwright.chromium.launch(**launch_kwargs)
-    return browser, screen_w, screen_h
+    return browser, 0, 0
 
 
-def _create_context(browser, screen_w, screen_h, use_storage_state=True):
-    context_args = {"viewport": {"width": screen_w, "height": screen_h}}
-    if use_storage_state:
+def _create_context(browser, screen_w=0, screen_h=0, use_storage_state=True):
+    context_args = {"no_viewport": True}
+    if use_storage_state and Path(CONFIG["auth_json_path"]).exists():
         context_args["storage_state"] = CONFIG["auth_json_path"]
     return browser.new_context(**context_args)
 
@@ -986,7 +982,7 @@ def _fill_text_field(locator, value: str) -> None:
         locator.click(timeout=10000)
     except PlaywrightError:
         locator.click(force=True, timeout=10000)
-    locator.press("Control+A")
+    locator.press("ControlOrMeta+a")
     locator.press("Backspace")
     locator.fill(str(value))
     locator.press("Tab")
@@ -1342,7 +1338,7 @@ def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int,
 def _refresh_for_next_batch(page):
     print("Refreshing page for next batch...")
     try:
-        page.keyboard.press("Control+R")
+        page.keyboard.press("ControlOrMeta+r")
         page.wait_for_load_state("domcontentloaded", timeout=CONFIG["page_load_timeout_ms"])
     except Exception as err:
         print(f"Control+R refresh failed ({err}); using page.reload().")
@@ -1588,7 +1584,7 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     print(f"Bulk paste: {len(records)} rows x {col_count} columns (starting at Date column).")
     _focus_journal_row_for_paste(page, 0)
     _set_page_clipboard(page, paste_text)
-    page.keyboard.press("Control+V")
+    page.keyboard.press("ControlOrMeta+v")
     page.wait_for_timeout(400)
 
     expected_rows = len(records)
@@ -1738,7 +1734,7 @@ def _process_sub_batch(page, records):
                 except Exception:
                     try:
                         locator.click()
-                        locator.press("Control+A")
+                        locator.press("ControlOrMeta+a")
                         locator.press("Backspace")
                     except Exception:
                         pass
@@ -1865,13 +1861,13 @@ def _process_sub_batch(page, records):
             for loc in (pay_ref_loc, value_date_loc, credit_loc, ref_date_loc, paym_mode_input):
                 try:
                     loc.click()
-                    loc.press("Control+A")
+                    loc.press("ControlOrMeta+a")
                     loc.press("Backspace")
                 except Exception:
                     pass
             try:
                 offset_account_field.click()
-                offset_account_field.press("Control+A")
+                offset_account_field.press("ControlOrMeta+a")
                 offset_account_field.press("Backspace")
             except Exception:
                 pass

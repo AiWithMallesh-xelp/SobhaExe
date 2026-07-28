@@ -54,6 +54,182 @@ except Exception as err:
     automation_module = None
     AUTOMATION_IMPORT_ERROR = err
 
+def _calc_scroll_delta(event) -> int:
+    """Return scroll units from a MouseWheel / Button-4/5 event.
+
+    Tk 9.0 on macOS: delta = int(dy * 65536), a fixed-point representation.
+    Values like 65475 ≈ +1 pixel, 131069 ≈ +2 pixels, -131115 ≈ -2 pixels.
+    """
+    if getattr(event, "num", None) == 4:
+        return -1
+    elif getattr(event, "num", None) == 5:
+        return 1
+
+    d = getattr(event, "delta", 0)
+    if d == 0:
+        return 0
+
+    if sys.platform == "darwin" and _IS_AQUA_TK9:
+        # Tk 9.0: delta = int(dy * 65536), fixed-point 16.16 format
+        pixels = d / 65536.0
+        units = int(round(pixels))
+        # Ensure at least 1 unit of movement for any non-zero scroll
+        if units == 0:
+            units = 1 if pixels > 0 else -1
+        # Clamp for smooth scrolling
+        units = max(-5, min(5, units))
+        return -units   # negate: positive dy (up in Cocoa) → scroll up (negative yview)
+    elif sys.platform == "darwin":
+        # Tk 8.6 macOS: delta is ±1..±N directly
+        return -1 if d > 0 else 1
+    else:
+        # Windows / Linux: delta is ±120 per notch
+        return int(d / -120) or (-1 if d > 0 else 1)
+
+# Detect Tk 9.0 + macOS Aqua — tk.Button(relief="flat", bg=...) is non-functional
+_IS_AQUA_TK9 = False
+try:
+    _probe = tk.Tk()
+    _probe.withdraw()
+    _IS_AQUA_TK9 = (
+        _probe.tk.call("tk", "windowingsystem") == "aqua"
+        and float(tk.TkVersion) >= 9.0
+    )
+    _probe.destroy()
+    del _probe
+except Exception:
+    pass
+
+
+def _make_button(
+    parent, *, text="", command=None, bg="#e5e7eb", fg="#333333",
+    activebackground=None, activeforeground=None,
+    font=("Segoe UI", 10), padx=12, pady=6, cursor="hand2",
+    relief="flat", borderwidth=0, width=None, state="normal",
+    highlightthickness=0, **_extra
+):
+    """Create a styled button that works on ALL platforms including macOS Tk 9.0.
+
+    On macOS Tk 9.0 Aqua, tk.Button with relief='flat' and custom bg/fg
+    silently ignores clicks.  We work around this by building buttons from
+    tk.Frame + tk.Label + <Button-1> bindings.
+    """
+    if activebackground is None:
+        activebackground = bg
+    if activeforeground is None:
+        activeforeground = fg
+
+    if not _IS_AQUA_TK9:
+        # Standard tk.Button on Linux / Windows / older Tk
+        btn_kwargs = dict(
+            text=text, command=command, bg=bg, fg=fg, relief=relief,
+            activebackground=activebackground, activeforeground=activeforeground,
+            font=font, padx=padx, pady=pady, cursor=cursor,
+            borderwidth=borderwidth, highlightthickness=highlightthickness,
+            state=state,
+        )
+        if width is not None:
+            btn_kwargs["width"] = width
+        return tk.Button(parent, **btn_kwargs)
+
+    # ── macOS Tk 9.0 workaround: Frame + Label acting as a button ──
+    frame = tk.Frame(parent, bg=bg, cursor=cursor, padx=padx, pady=pady,
+                     highlightthickness=1, highlightbackground=bg)
+    lbl = tk.Label(frame, text=text, bg=bg, fg=fg, font=font, cursor=cursor)
+    lbl.pack()
+
+    # Store state so we can disable / enable / reconfig later
+    frame._btn_command = command
+    frame._btn_label = lbl
+    frame._btn_bg = bg
+    frame._btn_fg = fg
+    frame._btn_abg = activebackground
+    frame._btn_afg = activeforeground
+    frame._btn_state = state
+
+    def _on_click(event=None):
+        if frame._btn_state == "disabled":
+            return
+        cb = frame._btn_command
+        if cb:
+            cb()
+
+    # Capture the REAL frame.config before we monkey-patch it
+    _original_frame_config = frame.configure
+
+    def _on_enter(event=None):
+        if frame._btn_state == "disabled":
+            return
+        _original_frame_config(bg=frame._btn_abg, highlightbackground=frame._btn_abg)
+        lbl.config(bg=frame._btn_abg, fg=frame._btn_afg)
+
+    def _on_leave(event=None):
+        cur_bg = frame._btn_bg
+        _original_frame_config(bg=cur_bg, highlightbackground=cur_bg)
+        lbl.config(bg=cur_bg, fg=frame._btn_fg)
+
+    for w in (frame, lbl):
+        w.bind("<Button-1>", _on_click)
+        w.bind("<Enter>", _on_enter)
+        w.bind("<Leave>", _on_leave)
+
+    # Monkey-patch .config() and .cget() so calling code can use btn.config(text=...)
+
+    def _patched_config(cnf=None, **kw):
+        # Intercept text, bg, fg, state, command changes
+        if cnf:
+            kw.update(cnf)
+        text_val = kw.pop("text", None)
+        bg_val = kw.pop("bg", None)
+        fg_val = kw.pop("fg", None)
+        state_val = kw.pop("state", None)
+        cmd_val = kw.pop("command", None)
+        abg_val = kw.pop("activebackground", None)
+        afg_val = kw.pop("activeforeground", None)
+        cursor_val = kw.pop("cursor", None)
+        # Ignore font kwarg changes for simplicity, accept gracefully
+        kw.pop("font", None)
+        kw.pop("relief", None)
+        kw.pop("padx", None)
+        kw.pop("pady", None)
+        kw.pop("borderwidth", None)
+        kw.pop("highlightthickness", None)
+        kw.pop("width", None)
+
+        if text_val is not None:
+            lbl.config(text=text_val)
+        if bg_val is not None:
+            frame._btn_bg = bg_val
+            _original_frame_config(bg=bg_val, highlightbackground=bg_val)
+            lbl.config(bg=bg_val)
+        if fg_val is not None:
+            frame._btn_fg = fg_val
+            lbl.config(fg=fg_val)
+        if abg_val is not None:
+            frame._btn_abg = abg_val
+        if afg_val is not None:
+            frame._btn_afg = afg_val
+        if state_val is not None:
+            frame._btn_state = state_val
+            if state_val == "disabled":
+                _original_frame_config(cursor="")
+                lbl.config(cursor="")
+            else:
+                _original_frame_config(cursor="hand2")
+                lbl.config(cursor="hand2")
+        if cmd_val is not None:
+            frame._btn_command = cmd_val
+        if cursor_val is not None and frame._btn_state != "disabled":
+            _original_frame_config(cursor=cursor_val)
+            lbl.config(cursor=cursor_val)
+        if kw:
+            _original_frame_config(**kw)
+
+    frame.config = _patched_config
+    frame.configure = _patched_config
+
+    return frame
+
 # --- Constants & Configuration ---
 bg_color = "#F8F9FA"
 sidebar_color = "#343A40"
@@ -196,7 +372,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         self.add_field_var = tk.StringVar()
         self.add_field_cb = ttk.Combobox(add_row, textvariable=self.add_field_var, state="readonly", width=30)
         self.add_field_cb.pack(side="left", padx=(8, 8))
-        tk.Button(
+        _make_button(
             add_row,
             text="Add",
             command=self._add_selected_field,
@@ -218,7 +394,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
         tk.Label(custom_row, text="Default value", bg="white", fg="#6b7280", font=("Segoe UI", 8)).pack(side="left", padx=(0, 4))
         self.custom_default_var = tk.StringVar()
         tk.Entry(custom_row, textvariable=self.custom_default_var, width=20, font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
-        tk.Button(
+        _make_button(
             custom_row,
             text="Add custom",
             command=self._add_custom_field,
@@ -233,7 +409,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
 
         footer = tk.Frame(main, bg="white")
         footer.pack(fill="x", pady=(14, 0))
-        tk.Button(
+        _make_button(
             footer,
             text="Reset defaults",
             command=self._reset_defaults,
@@ -245,7 +421,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             pady=6,
             cursor="hand2",
         ).pack(side="left")
-        tk.Button(
+        _make_button(
             footer,
             text="Cancel",
             command=self.destroy,
@@ -258,7 +434,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             pady=5,
             cursor="hand2",
         ).pack(side="right", padx=(8, 0))
-        tk.Button(
+        _make_button(
             footer,
             text="Save",
             command=self._save,
@@ -297,13 +473,9 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             self.list_canvas.unbind_all(seq)
 
     def _on_mousewheel(self, event):
-        if event.num == 4:
-            delta = -1
-        elif event.num == 5:
-            delta = 1
-        else:
-            delta = int(event.delta / -120)
-        self.list_canvas.yview_scroll(delta, "units")
+        delta = _calc_scroll_delta(event)
+        if delta != 0:
+            self.list_canvas.yview_scroll(delta, "units")
 
     def _set_rows(self, col_defs: list):
         for widget in self.rows_frame.winfo_children():
@@ -365,7 +537,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
 
         actions = tk.Frame(row, bg=row_bg)
         actions.grid(row=0, column=4, sticky="e", padx=(0, 8))
-        tk.Button(
+        _make_button(
             actions,
             text="↑",
             command=lambda: self._move_row(key, -1),
@@ -375,7 +547,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             fg="#1d4ed8",
             cursor="hand2",
         ).pack(side="left", padx=(0, 4))
-        tk.Button(
+        _make_button(
             actions,
             text="↓",
             command=lambda: self._move_row(key, 1),
@@ -385,7 +557,7 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
             fg="#1d4ed8",
             cursor="hand2",
         ).pack(side="left", padx=(0, 4))
-        tk.Button(
+        _make_button(
             actions,
             text="✕",
             command=lambda: self._remove_row(key),
@@ -579,15 +751,15 @@ class SalesAccReceiptGenDialog(tk.Toplevel):
         footer = tk.Frame(main, bg="white")
         footer.pack(fill="x")
 
-        tk.Button(footer, text="Mark as Non-SA", command=self._mark_non_sa,
+        _make_button(footer, text="Mark as Non-SA", command=self._mark_non_sa,
                   bg="#FFF0F0", fg="#C0392B", relief="flat",
                   font=("Arial", 9), padx=10, pady=6).pack(side="left")
 
-        tk.Button(footer, text="Cancel", command=self.destroy,
+        _make_button(footer, text="Cancel", command=self.destroy,
                   bg="white", fg="#555", relief="solid", borderwidth=1,
                   font=("Arial", 9), padx=12, pady=5).pack(side="right", padx=(8, 0))
 
-        tk.Button(footer, text="  Save  ", command=self._save,
+        _make_button(footer, text="  Save  ", command=self._save,
                   bg=accent_color, fg="white", relief="flat",
                   font=("Arial", 9, "bold"), padx=14, pady=6).pack(side="right")
 
@@ -738,23 +910,15 @@ class ProfessionalTable(tk.Frame):
             self.body_canvas.unbind_all(seq)
 
     def _on_mousewheel(self, event):
-        if event.num == 4:
-            delta = -1
-        elif event.num == 5:
-            delta = 1
-        else:
-            delta = int(event.delta / -120)
-        self.body_canvas.yview_scroll(delta, "units")
+        delta = _calc_scroll_delta(event)
+        if delta != 0:
+            self.body_canvas.yview_scroll(delta, "units")
 
     def _on_shift_mousewheel(self, event):
-        if event.num == 4:
-            delta = -1
-        elif event.num == 5:
-            delta = 1
-        else:
-            delta = int(event.delta / -120)
-        self.header_canvas.xview_scroll(delta, "units")
-        self.body_canvas.xview_scroll(delta, "units")
+        delta = _calc_scroll_delta(event)
+        if delta != 0:
+            self.header_canvas.xview_scroll(delta, "units")
+            self.body_canvas.xview_scroll(delta, "units")
 
 
 # ---------------------------------------------------------------------------
@@ -786,6 +950,7 @@ class Application(tk.Tk):
         self.status_bar: Optional[tk.Label] = None
         self.login_button: Optional[tk.Button] = None
         self._auth_probe_serial = 0
+        self._session_anim_serial = 0
         self._login_display_name: Optional[str] = None
         self.clipboard_col_defs = load_clipboard_col_defs()
         self.bulk_paste_mode_var = tk.BooleanVar(value=self._load_bulk_paste_mode_default())
@@ -856,7 +1021,7 @@ class Application(tk.Tk):
 
         top_actions = tk.Frame(toolbar, bg=self.colors["frame_bg"])
         top_actions.pack(side="right")
-        tk.Button(
+        _make_button(
             top_actions,
             text="⚙",
             command=self._open_clipboard_column_settings,
@@ -870,7 +1035,7 @@ class Application(tk.Tk):
             padx=10,
             pady=2,
         ).pack(side="right", padx=(0, 8))
-        self.login_button = tk.Button(
+        self.login_button = _make_button(
             top_actions,
             text="Login",
             command=self._run_login_automation,
@@ -886,7 +1051,7 @@ class Application(tk.Tk):
         )
         self.login_button.pack(side="right", padx=(0, 8))
 
-        tk.Button(
+        _make_button(
             top_actions,
             text="Refresh",
             command=self._load_transactions,
@@ -915,7 +1080,7 @@ class Application(tk.Tk):
             font=("Segoe UI", 10),
             cursor="hand2",
         ).pack(side="right", padx=(0, 12))
-        tk.Button(
+        _make_button(
             secondary_actions,
             text="Make Automation",
             command=self._submit_selection,
@@ -938,6 +1103,8 @@ class Application(tk.Tk):
 
         cards_host = tk.Frame(body_split, bg=self.colors["frame_bg"])
         cards_host.grid(row=0, column=0, sticky="nsew")
+        cards_host.grid_rowconfigure(0, weight=1)
+        cards_host.grid_columnconfigure(0, weight=1)
 
         self.cards_canvas = tk.Canvas(
             cards_host,
@@ -945,18 +1112,21 @@ class Application(tk.Tk):
             highlightthickness=0,
             bd=0,
         )
-        cards_scroll = ttk.Scrollbar(cards_host, orient="vertical", command=self.cards_canvas.yview)
+        cards_scroll = tk.Scrollbar(cards_host, orient="vertical", command=self.cards_canvas.yview)
         self.cards_canvas.configure(yscrollcommand=cards_scroll.set)
 
-        cards_scroll.pack(side="right", fill="y")
-        self.cards_canvas.pack(side="left", fill="both", expand=True)
+        self.cards_canvas.grid(row=0, column=0, sticky="nsew")
+        cards_scroll.grid(row=0, column=1, sticky="ns")
 
         self.cards_frame = tk.Frame(self.cards_canvas, bg=self.colors["frame_bg"])
         self.cards_canvas_window_id = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
         self.cards_frame.bind("<Configure>", self._on_cards_frame_configure)
         self.cards_canvas.bind("<Configure>", self._on_cards_canvas_configure)
-        self.cards_canvas.bind("<Enter>", self._bind_cards_mousewheel)
-        self.cards_canvas.bind("<Leave>", self._unbind_cards_mousewheel)
+        # Bind scroll globally — Enter/Leave approach breaks on macOS Tk 9.0
+        # because child widgets (batch cards) trigger <Leave> on the canvas
+        self.bind_all("<MouseWheel>", self._on_cards_mousewheel)
+        self.bind_all("<Button-4>", self._on_cards_mousewheel)
+        self.bind_all("<Button-5>", self._on_cards_mousewheel)
 
         # --- Footer ---
         footer = tk.Frame(modal, bg=self.colors["frame_bg"], padx=12, pady=10)
@@ -992,10 +1162,15 @@ class Application(tk.Tk):
 
         normalized_name = str(display_name or "").strip() or None
         self._login_display_name = normalized_name if valid else None
-        button_text = (normalized_name or "Logged In") if valid else "Login"
+        if valid and normalized_name and len(normalized_name) > 22:
+            button_text = f"{normalized_name[:19]}..."
+        else:
+            button_text = (normalized_name or "Logged In") if valid else "Login"
         button_bg = self.colors["accent"] if valid else self.colors["success"]
         active_bg = "#264fdf" if valid else "#14913f"
         self.login_button.config(
+            state="normal",
+            cursor="hand2",
             text=button_text,
             bg=button_bg,
             activebackground=active_bg,
@@ -1023,25 +1198,26 @@ class Application(tk.Tk):
 
         self._auth_probe_serial += 1
         probe_id = self._auth_probe_serial
+        self._session_anim_serial += 1
+        anim_id = self._session_anim_serial
 
-        # UI Animation for session checking
         self._is_checking_session = True
         self._session_check_step = 3
         if self.login_button:
-            self.login_button.config(state="disabled", bg="#6c757d", cursor="watch")
-            
+            self.login_button.config(state="disabled", bg="#6c757d", cursor="watch", text="Checking session...")
+
         def update_button_animation():
-            if not getattr(self, "_is_checking_session", False):
+            if anim_id != self._session_anim_serial or not getattr(self, "_is_checking_session", False):
                 return
-            if self.login_button:
-                if self._session_check_step > 0:
-                    self.login_button.config(text=f"Session checking {self._session_check_step}")
-                    self._session_check_step -= 1
-                    self.after(1000, update_button_animation)
-                else:
-                    self.login_button.config(text="Opening...")
-                    # Let it stay as Opening... until the probe finishes
-                    
+            if not self.login_button:
+                return
+            if self._session_check_step > 0:
+                self.login_button.config(text=f"Session checking {self._session_check_step}")
+                self._session_check_step -= 1
+                self.after(1000, update_button_animation)
+            else:
+                self.login_button.config(text="Opening...")
+
         update_button_animation()
 
         def probe_task():
@@ -1052,6 +1228,7 @@ class Application(tk.Tk):
                 auth_result = {"valid": False, "display_name": None, "reason": str(err)}
 
             def on_complete():
+                self._session_anim_serial += 1
                 self._is_checking_session = False
                 if self.login_button:
                     self.login_button.config(state="normal", cursor="hand2")
@@ -1068,34 +1245,33 @@ class Application(tk.Tk):
             detail = f"{detail}\n\nClick Login and sign in again."
         messagebox.showerror("Session Expired", detail)
 
+    def _refresh_cards_canvas(self, _event=None):
+        if not self.cards_canvas or not self.cards_frame:
+            return
+        self.cards_frame.update_idletasks()
+        canvas_width = max(self.cards_canvas.winfo_width(), 1)
+        if canvas_width > 1 and self.cards_canvas_window_id is not None:
+            self.cards_canvas.itemconfigure(self.cards_canvas_window_id, width=canvas_width)
+        bbox = self.cards_canvas.bbox("all")
+        if bbox:
+            self.cards_canvas.configure(scrollregion=bbox)
+
     def _on_cards_frame_configure(self, _event=None):
-        if self.cards_canvas:
-            self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all"))
+        self._refresh_cards_canvas()
 
     def _on_cards_canvas_configure(self, event):
         if self.cards_canvas and self.cards_canvas_window_id is not None:
             self.cards_canvas.itemconfigure(self.cards_canvas_window_id, width=event.width)
+        self._refresh_cards_canvas()
 
-    def _bind_cards_mousewheel(self, _event):
-        self.bind_all("<MouseWheel>", self._on_cards_mousewheel)
-        self.bind_all("<Button-4>", self._on_cards_mousewheel)
-        self.bind_all("<Button-5>", self._on_cards_mousewheel)
-
-    def _unbind_cards_mousewheel(self, _event):
-        self.unbind_all("<MouseWheel>")
-        self.unbind_all("<Button-4>")
-        self.unbind_all("<Button-5>")
+    # Scroll is now permanently bound at init — no Enter/Leave needed
 
     def _on_cards_mousewheel(self, event):
         if not self.cards_canvas:
             return
-        if getattr(event, "num", None) == 4:
-            delta = -1
-        elif getattr(event, "num", None) == 5:
-            delta = 1
-        else:
-            delta = int(event.delta / -120)
-        self.cards_canvas.yview_scroll(delta, "units")
+        delta = _calc_scroll_delta(event)
+        if delta != 0:
+            self.cards_canvas.yview_scroll(delta, "units")
 
     def _on_batch_canvas_configure(self, event):
         pass
@@ -1419,7 +1595,7 @@ class Application(tk.Tk):
             header.pack(fill="x")
             header.pack_propagate(False)
 
-            radio_btn = tk.Button(
+            radio_btn = _make_button(
                 header,
                 text="",
                 cursor="hand2",
@@ -1437,27 +1613,34 @@ class Application(tk.Tk):
             radio_btn.pack(side="left", padx=(0, 8))
             self._style_batch_radio_button(radio_btn, batch_selected)
 
-            title_wrap = tk.Frame(header, bg=self.colors["card_header_bg"])
+            title_wrap = tk.Frame(header, bg=self.colors["card_header_bg"], cursor="hand2")
             title_wrap.pack(side="left", fill="x", expand=True, padx=(6, 0))
-            tk.Label(
+            lbl1 = tk.Label(
                 title_wrap,
                 text=batch_id,
                 bg=self.colors["card_header_bg"],
                 fg=self.colors["title"],
                 font=("Segoe UI", 9, "bold"),
                 anchor="w",
-            ).pack(anchor="w")
-            tk.Label(
+                cursor="hand2",
+            )
+            lbl1.pack(anchor="w")
+            lbl2 = tk.Label(
                 title_wrap,
                 text=f"{len(sub_batches)} sub-batches",
                 bg=self.colors["card_header_bg"],
                 fg=self.colors["muted"],
                 font=("Segoe UI", 8),
                 anchor="w",
-            ).pack(anchor="w")
+                cursor="hand2",
+            )
+            lbl2.pack(anchor="w")
+
+            for widget in (header, title_wrap, lbl1, lbl2):
+                widget.bind("<Button-1>", lambda _e, bid=batch_id: self._toggle_batch_selection(bid))
 
             if batch_selected:
-                copy_btn = tk.Button(
+                copy_btn = _make_button(
                     header,
                     text="\U0001f4cb",
                     cursor="hand2",
@@ -1556,7 +1739,7 @@ class Application(tk.Tk):
                     row_frame.pack(fill="x")
                     for col_idx, (key, _label, weight) in enumerate(col_defs):
                         row_frame.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
-                        if key in {"account", "payment_reference"}:
+                        if key in {"value_date", "reference_date", "account", "credit", "offset_account", "method_of_payment", "payment_reference"}:
                             entry = tk.Entry(
                                 row_frame,
                                 textvariable=row_widgets[key],
@@ -1587,6 +1770,8 @@ class Application(tk.Tk):
             self.row_count_label.config(
                 text=f"{self.current_batch_count} batches | {self.current_sub_batch_count} sub-batches"
             )
+        self._refresh_cards_canvas()
+        self.after_idle(self._refresh_cards_canvas)
 
     def _style_batch_radio_button(self, button: tk.Button, selected: bool):
         if selected:
@@ -1618,7 +1803,11 @@ class Application(tk.Tk):
         batch_key = str(batch_id).strip()
         if not batch_key:
             return
-        self.selected_batch_var.set(batch_key)
+        # Toggle: deselect if already selected, otherwise select
+        if self.selected_batch_var.get().strip() == batch_key:
+            self.selected_batch_var.set("")
+        else:
+            self.selected_batch_var.set(batch_key)
         self._apply_filter()
 
     def _confirm_automation_dialog(self, batch_id: str, sub_batch_count: int, transaction_count: int) -> bool:
@@ -1705,7 +1894,7 @@ class Application(tk.Tk):
             result["ok"] = False
             dlg.destroy()
 
-        tk.Button(
+        _make_button(
             btn_row,
             text="Continue",
             command=on_confirm,
@@ -1720,7 +1909,7 @@ class Application(tk.Tk):
             pady=9,
         ).pack(side="right")
 
-        tk.Button(
+        _make_button(
             btn_row,
             text="Cancel",
             command=on_cancel,
@@ -1763,16 +1952,24 @@ class Application(tk.Tk):
                     for sub_batch in batch.get("sub_batches", [])
                     for transaction in sub_batch.get("transactions", [])
                 ]
+                sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in batch_groups)
+                print(
+                    f"API loaded {len(batch_groups)} batches, "
+                    f"{sub_batch_count} sub-batches, {len(flat_rows)} transactions"
+                )
                 self.after(
                     0,
                     lambda groups=batch_groups, rows=flat_rows: self._apply_loaded_transactions(groups, rows),
                 )
             except urllib.error.HTTPError as err:
-                self.after(0, lambda: messagebox.showerror("API Error", f"HTTP {err.code}: {err.reason}"))
+                print(f"API HTTP error: {err.code} {err.reason}")
+                self.after(0, lambda e=err: messagebox.showerror("API Error", f"HTTP {e.code}: {e.reason}"))
             except urllib.error.URLError as err:
-                self.after(0, lambda: messagebox.showerror("API Error", f"Network error: {err.reason}"))
+                print(f"API network error: {err.reason}")
+                self.after(0, lambda e=err: messagebox.showerror("API Error", f"Network error: {e.reason}"))
             except Exception as err:
-                self.after(0, lambda: messagebox.showerror("API Error", f"Failed to fetch transactions:\n{err}"))
+                print(f"API fetch failed: {err}")
+                self.after(0, lambda e=err: messagebox.showerror("API Error", f"Failed to fetch transactions:\n{e}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1783,8 +1980,10 @@ class Application(tk.Tk):
             str(batch.get("batch_id", "")).strip()
             for batch in batch_groups
         }
-        if self.selected_batch_var.get().strip() not in valid_batch_ids:
-            self.selected_batch_var.set("")
+        current_selected = self.selected_batch_var.get().strip()
+        if batch_groups and (not current_selected or current_selected not in valid_batch_ids):
+            first_id = str(batch_groups[0].get("batch_id", "")).strip()
+            self.selected_batch_var.set(first_id)
         self._refresh_match_counts()
         self._apply_filter()
 
@@ -1808,6 +2007,12 @@ class Application(tk.Tk):
     def _submit_selection(self):
         self._sync_current_edits()
         selected_group = self._selected_batch_group()
+        if selected_group is None and self.batch_groups:
+            first_id = str(self.batch_groups[0].get("batch_id", "")).strip()
+            self.selected_batch_var.set(first_id)
+            self._apply_filter()
+            selected_group = self._selected_batch_group()
+
         if selected_group is None:
             messagebox.showwarning("No Selection", "Please select one main batch to submit.")
             return
