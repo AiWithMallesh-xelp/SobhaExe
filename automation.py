@@ -27,7 +27,7 @@ import time
 import tkinter as tk
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 REQUIRED_CONFIG_KEYS = (
     "d365_url",
@@ -71,11 +71,19 @@ DEFAULT_BULK_UPDATE_URL = "https://uat-sobha.docuxray.ai/api/prePost/bulkUpdateR
 BULK_PASTE_BATCH_SIZE = 20
 
 try:
-    from clipboard_export import build_paste_clipboard_text, load_clipboard_col_defs, normalize_col_defs
+    from clipboard_export import build_paste_clipboard_text, load_clipboard_col_defs, normalize_col_defs, normalize_date
 except ImportError:
     build_paste_clipboard_text = None
     load_clipboard_col_defs = None
     normalize_col_defs = None
+    normalize_date = None
+
+try:
+    from dmf_import import build_import_workbook
+except ImportError:
+    build_import_workbook = None
+
+LINE_ENTRY_MODES = frozenset({"paste", "dmf"})
 
 VISUAL_ENHANCEMENT_SCRIPT = '''
 window.addEventListener('DOMContentLoaded', () => {
@@ -254,6 +262,7 @@ def _find_config_path() -> Path:
             "browser_slow_mo_ms": 0,
             "page_load_timeout_ms": 60000,
             "page_load_wait_seconds": 1,
+            "line_entry_mode": "paste",
             "post_click_timeout_ms": 300000,
             "manual_login_button_timeout_ms": 1800000,
         }
@@ -308,6 +317,25 @@ def _load_config() -> tuple[dict, Path]:
 
 
 CONFIG, CONFIG_PATH = _load_config()
+
+
+def d365_company_from_config() -> str:
+    query = parse_qs(urlparse(str(CONFIG.get("d365_url", ""))).query)
+    return (query.get("cmp") or [""])[0].strip()
+
+
+def line_entry_mode_from_config() -> str:
+    mode = str(CONFIG.get("line_entry_mode", "paste")).strip().lower()
+    if mode not in LINE_ENTRY_MODES:
+        return "paste"
+    return mode
+
+
+def _d365_workspace_url(menu_item: str) -> str:
+    parsed = urlparse(str(CONFIG.get("d365_url", "")))
+    company = d365_company_from_config()
+    base = f"{parsed.scheme}://{parsed.netloc}/"
+    return f"{base}?cmp={company}&mi={menu_item}"
 
 
 def update_user_runtime_config(d365_url: str | None = None, journal_name: str | None = None) -> tuple[bool, str]:
@@ -511,20 +539,16 @@ def _bulk_update_receipts(records, receipt_numbers) -> tuple[bool, str]:
         return False, f"PATCH failed: {err}"
 
 
-def _normalize_reference_date(date_text: str) -> str:
-    """Convert to M/D/YYYY for D365 reference date field."""
+def _d365_date(date_text, fallback: str = "") -> str:
+    """Convert any supported date input to mm/dd/yyyy for D365."""
+    if normalize_date is None:
+        return str(date_text or "").strip() or fallback
+    normalized = normalize_date(date_text)
+    if normalized:
+        return normalized
     raw = str(date_text or "").strip()
-    if not raw:
-        return raw
+    return raw or fallback
 
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
-        try:
-            dt = datetime.strptime(raw, fmt)
-            return f"{dt.month}/{dt.day}/{dt.year}"
-        except ValueError:
-            continue
-    # Fallback: keep input if parsing fails.
-    return raw
 
 class AutomationStoppedByUser(RuntimeError):
     pass
@@ -1155,11 +1179,45 @@ def _wait_for_post_confirmation(page):
         """
         () => {
           window.automationPostContinueClicked = false;
-          const oldGate = document.getElementById('automation-post-continue-gate');
-          if (oldGate) oldGate.remove();
+          if (window.__automationPostGateCleanup) {
+            window.__automationPostGateCleanup();
+          }
+
+          const GATE_ID = 'automation-post-continue-gate';
+
+          const removeGate = () => {
+            const existing = document.getElementById(GATE_ID);
+            if (existing) existing.remove();
+          };
+
+          const isPostClick = (target) => {
+            const button = target && target.closest
+              ? target.closest('button, [role="button"], [role="menuitem"]')
+              : null;
+            if (!button) return false;
+            if (button.closest('#' + GATE_ID)) return false;
+            const text = (button.innerText || button.textContent || '').trim();
+            return /^post\\b/i.test(text);
+          };
+
+          const onDocumentClick = (event) => {
+            if (document.getElementById(GATE_ID)) return;
+            if (!isPostClick(event.target)) return;
+            // Let D365 finish validating/posting before asking for confirmation again.
+            setTimeout(buildGate, 2500);
+          };
+
+          window.__automationPostGateCleanup = () => {
+            document.removeEventListener('click', onDocumentClick, true);
+            window.__automationPostGateCleanup = null;
+            removeGate();
+          };
+
+          function buildGate() {
+          removeGate();
 
           const wrap = document.createElement('div');
-          wrap.id = 'automation-post-continue-gate';
+          wrap.id = GATE_ID;
           wrap.setAttribute('role', 'dialog');
           wrap.setAttribute('aria-modal', 'false');
 
@@ -1194,7 +1252,9 @@ def _wait_for_post_confirmation(page):
                   Confirm posting is successful
                 </div>
                 <div style="margin-top:6px; font-size:13px; line-height:1.4; color: rgba(15, 23, 42, 0.88);">
-                  Please ensure posting is successful. Click Continue only after successful posting.
+                  Click Continue only after posting succeeded. If posting failed, click Wait, fix the
+                  errors in D365, and click Post again - this box reappears after each Post.
+                  Nothing is submitted until you click Continue.
                 </div>
               </div>
             </div>
@@ -1206,6 +1266,32 @@ def _wait_for_post_confirmation(page):
             justifyContent: 'flex-end',
             gap: '10px',
             marginTop: '12px'
+          });
+
+          const confirmPosting = () => {
+            if (window.__automationPostGateCleanup) {
+              document.removeEventListener('click', onDocumentClick, true);
+              window.__automationPostGateCleanup = null;
+            }
+            window.automationPostContinueClicked = true;
+            wrap.remove();
+          };
+
+          const waitButton = document.createElement('button');
+          waitButton.type = 'button';
+          waitButton.textContent = 'Wait';
+          Object.assign(waitButton.style, {
+            padding: '9px 14px',
+            borderRadius: '12px',
+            border: '1px solid rgba(17,24,39,0.18)',
+            background: '#fff',
+            color: '#0f172a',
+            fontWeight: '700',
+            fontSize: '13px',
+            cursor: 'pointer'
+          });
+          waitButton.addEventListener('click', () => {
+            wrap.remove();
           });
 
           const button = document.createElement('button');
@@ -1222,14 +1308,16 @@ def _wait_for_post_confirmation(page):
             cursor: 'pointer',
             boxShadow: '0 10px 26px rgba(22,163,74,0.28)'
           });
-          button.addEventListener('click', () => {
-            window.automationPostContinueClicked = true;
-            wrap.remove();
-          });
+          button.addEventListener('click', confirmPosting);
 
+          actions.appendChild(waitButton);
           actions.appendChild(button);
           wrap.appendChild(actions);
           document.body.appendChild(wrap);
+          }
+
+          document.addEventListener('click', onDocumentClick, true);
+          buildGate();
         }
         """
     )
@@ -1576,6 +1664,496 @@ def _extract_chunk_voucher_values(page, chunk_size: int):
     return voucher_values
 
 
+_DATE_INPUT_SEL = 'input[aria-label="Date"]:not([id^="Sel_"])'
+# The grid column is PaymMode; PaymMode1 is a different control that shadows it, so it ranks last.
+_METHOD_CELL_SELS = (
+    'input[id^="LedgerJournalTrans_PaymMode_"]:not([id*="PaymMode1"])',
+    'input[aria-label="Method of payment"]:not([id^="Sel_"])',
+)
+_REPAIR_FIELD_SPECS = (
+    ("account", "Account", {"css": _ACCOUNT_INPUT_SEL}),
+    (
+        "offset_account",
+        "Offset account",
+        {"css": 'input[id^="LedgerJournalTrans_OffsetAccount_"][id$="_input"]'},
+    ),
+    (
+        "method_of_payment",
+        "Method of payment",
+        {"css": 'input[aria-label="Method of payment"]:not([id^="Sel_"])'},
+    ),
+)
+_ACCOUNT_CELL_SELS = (_ACCOUNT_INPUT_SEL,)
+_DATE_CELL_SELS = (_DATE_INPUT_SEL,)
+_LOOKUP_REPAIR_FIELDS = (
+    ("account", "Account", _ACCOUNT_CELL_SELS),
+    (
+        "offset_account",
+        "Offset account",
+        ('input[id^="LedgerJournalTrans_OffsetAccount_"][id$="_input"]',),
+    ),
+    ("method_of_payment", "Method of payment", _METHOD_CELL_SELS),
+)
+
+
+def _journal_row_cells(page, selectors) -> list:
+    """Candidate cell ids per grid row, scoped to the same tr/role=row as the Account cell."""
+    try:
+        rows = page.evaluate(
+            """
+            ({ accountSel, cellSels }) => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const st = window.getComputedStyle(el);
+                    if (st.visibility === 'hidden' || st.display === 'none') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                const usable = (el) => Boolean(el && el.id && !el.id.startsWith('Sel_') && isVisible(el));
+                const accounts = [...document.querySelectorAll(accountSel)].filter(usable);
+                const rowFor = (el) => el.closest('tr,[role="row"]');
+                const seenRows = new Set();
+                const orderedAccounts = [];
+                for (const account of accounts) {
+                    const row = rowFor(account);
+                    const key = row ? row : account;
+                    if (seenRows.has(key)) continue;
+                    seenRows.add(key);
+                    orderedAccounts.push(account);
+                }
+                return orderedAccounts.map((account) => {
+                    const row = rowFor(account);
+                    const scope = row || account.parentElement;
+                    if (!scope) return [];
+                    const found = [];
+                    const push = (el) => {
+                        if (usable(el) && !found.includes(el.id)) found.push(el.id);
+                    };
+                    if (cellSels.some((sel) => sel === accountSel)) {
+                        for (const el of scope.querySelectorAll(accountSel)) push(el);
+                        found.sort((a, b) => {
+                            const score = (id) => (id.includes(' ') ? 1 : 0);
+                            return score(a) - score(b);
+                        });
+                        return found;
+                    }
+                    for (const selector of cellSels) {
+                        for (const el of scope.querySelectorAll(selector)) push(el);
+                    }
+                    return found;
+                });
+            }
+            """,
+            {"accountSel": _ACCOUNT_INPUT_SEL, "cellSels": list(selectors)},
+        )
+    except PlaywrightError as err:
+        print(f"Warning: Could not map grid cells ({selectors}): {err}")
+        return []
+    return [[str(cell_id) for cell_id in (row or [])] for row in (rows or [])]
+
+
+def _journal_row_count(page) -> int:
+    return len(_journal_row_cells(page, _ACCOUNT_CELL_SELS))
+
+
+def _confirm_unsaved_changes_dialog(page) -> bool:
+    """Click Save on D365's 'Do you want to save your changes?' prompt, which blocks all input."""
+    try:
+        clicked = page.evaluate(
+            """
+            () => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const st = window.getComputedStyle(el);
+                    if (st.visibility === 'hidden' || st.display === 'none') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                const dialogs = [...document.querySelectorAll('[role="dialog"], .dialog-popup')]
+                    .filter((el) => isVisible(el) && /save your changes/i.test(el.innerText || ''));
+                for (const dialog of dialogs) {
+                    const button = [...dialog.querySelectorAll('button')].find(
+                        (el) => (el.innerText || '').trim().toLowerCase() === 'save'
+                    );
+                    if (button) {
+                        button.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+            """
+        )
+    except PlaywrightError:
+        return False
+
+    if not clicked:
+        return False
+    print("Confirmed D365 save-changes prompt.")
+    _wait_for_journal_grid_idle(page)
+    return True
+
+
+def _dismiss_blocking_modal(page) -> bool:
+    """Close a D365 message dialog. JS clicks bypass the edit-rails overlay that eats pointer events."""
+    try:
+        clicked = page.evaluate(
+            """
+            () => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const st = window.getComputedStyle(el);
+                    if (st.visibility === 'hidden' || st.display === 'none') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(
+                    (el) => isVisible(el) && !(el.id || '').startsWith('automation-')
+                );
+                for (const dialog of dialogs) {
+                    const button = [...dialog.querySelectorAll('button')].find((el) => {
+                        const text = (el.innerText || '').trim().toLowerCase();
+                        return text === 'ok' || text === 'close';
+                    });
+                    if (button) {
+                        button.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+            """
+        )
+    except PlaywrightError:
+        return False
+    if clicked:
+        _wait_for_journal_grid_idle(page)
+    return bool(clicked)
+
+
+def _wait_for_journal_grid_idle(page) -> None:
+    try:
+        page.locator("#ShellBlockingDiv").wait_for(
+            state="hidden",
+            timeout=int(CONFIG.get("page_load_timeout_ms", 60000)),
+        )
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+    page.wait_for_timeout(120)
+
+
+def _click_toolbar_save(page) -> bool:
+    """JS click the Save command. D365's edit-rails overlay intercepts real pointer events."""
+    try:
+        return bool(
+            page.evaluate(
+                """
+                () => {
+                    const button = document.querySelector(
+                        'button[name="SystemDefinedSaveButton"],'
+                        + 'button[data-dyn-controlname="SystemDefinedSaveButton"]'
+                    );
+                    if (!button || button.disabled) return false;
+                    button.click();
+                    return true;
+                }
+                """
+            )
+        )
+    except PlaywrightError as err:
+        print(f"Warning: Save command click failed: {err}")
+        return False
+
+
+def _save_journal_grid(page, label: str) -> None:
+    """Commit grid edits so D365 initializes the rows as real records."""
+    if not _click_toolbar_save(page):
+        try:
+            page.get_by_role("button", name=" Save").first.click(timeout=5000, force=True)
+        except (PlaywrightTimeoutError, PlaywrightError) as err:
+            print(f"Warning: Could not click Save ({label}): {err}")
+            return
+    page.wait_for_timeout(150)
+    _confirm_unsaved_changes_dialog(page)
+    _wait_for_journal_grid_idle(page)
+    print(f"Saved journal grid ({label}).")
+
+
+def _focus_cell(page, cell_id: str) -> bool:
+    """Focus a grid cell by id. Scrolls horizontally for off-screen columns like Offset account."""
+    try:
+        return bool(
+            page.evaluate(
+                """
+                (id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return false;
+                    const scrollHorizontal = (node) => {
+                        let parent = node.parentElement;
+                        while (parent && parent !== document.body) {
+                            if (parent.scrollWidth > parent.clientWidth + 4) {
+                                const rect = node.getBoundingClientRect();
+                                const box = parent.getBoundingClientRect();
+                                if (rect.left < box.left + 8) {
+                                    parent.scrollLeft -= (box.left + 8 - rect.left);
+                                } else if (rect.right > box.right - 8) {
+                                    parent.scrollLeft += (rect.right - box.right + 8);
+                                }
+                            }
+                            parent = parent.parentElement;
+                        }
+                    };
+                    el.scrollIntoView({ block: 'center', inline: 'center' });
+                    scrollHorizontal(el);
+                    el.focus();
+                    el.click();
+                    return document.activeElement === el || el.contains(document.activeElement);
+                }
+                """,
+                cell_id,
+            )
+        )
+    except PlaywrightError as err:
+        print(f"Warning: Could not focus cell {cell_id}: {err}")
+        return False
+
+
+def _activate_grid_row(page, row_index: int) -> bool:
+    """Select a journal line so off-screen lookup cells become focusable."""
+    rows = _journal_row_cells(page, _ACCOUNT_CELL_SELS)
+    if row_index >= len(rows) or not rows[row_index]:
+        return False
+    return bool(_focus_row_cell(page, rows[row_index]))
+
+
+def _cell_value(page, cell_id: str) -> str:
+    """Read a cell. Lookup controls keep display text in the gridcell, not always in input.value."""
+    if not cell_id:
+        return ""
+    try:
+        value = page.evaluate(
+            """
+            (id) => {
+                const el = document.getElementById(id);
+                if (!el) return '';
+                const read = (input) => {
+                    if (!input) return '';
+                    return String(input.value || input.getAttribute('title') || '').trim();
+                };
+                let best = read(el);
+                if (best) return best;
+                const row = el.closest('tr,[role="row"]');
+                if (row) {
+                    const aria = el.getAttribute('aria-label') || '';
+                    const idPrefix = (el.id || '').replace(/_input$/, '').split('_').slice(0, 3).join('_');
+                    for (const input of row.querySelectorAll('input')) {
+                        if (aria && input.getAttribute('aria-label') === aria) {
+                            best = read(input);
+                            if (best) return best;
+                        }
+                        if (idPrefix && (input.id || '').startsWith(idPrefix)) {
+                            best = read(input);
+                            if (best) return best;
+                        }
+                    }
+                }
+                const cell = el.closest('td,[role="gridcell"],.public_fixedDataTableCell_main');
+                if (cell) {
+                    const text = String(cell.innerText || cell.textContent || '').trim();
+                    if (text && text.length <= 80 && !text.startsWith('Segmented Entry control')) {
+                        return text.split('\\n').map((part) => part.trim()).filter(Boolean)[0] || '';
+                    }
+                }
+                return '';
+            }
+            """,
+            cell_id,
+        )
+    except PlaywrightError:
+        return ""
+    return " ".join(str(value or "").split())
+
+
+def _row_cell_value(page, cell_ids) -> str:
+    """Value of a cell, preferring stable ids (no space) and the longest non-empty read."""
+    if not cell_ids:
+        return ""
+    ordered = sorted(cell_ids, key=lambda cell_id: (1 if " " in cell_id else 0, cell_id))
+    best = ""
+    for cell_id in ordered:
+        value = _cell_value(page, cell_id)
+        if value and len(value) >= len(best):
+            best = value
+    return best
+
+
+def _focus_row_cell(page, cell_ids) -> str:
+    """Focus a cell, activating the row first for off-screen columns."""
+    for cell_id in cell_ids:
+        if _focus_cell(page, cell_id):
+            page.wait_for_timeout(100)
+            return cell_id
+    return ""
+
+
+def _type_into_focused_cell(page, value: str) -> None:
+    """Type into whatever cell has focus. D365 re-creates cell inputs, so element handles go stale."""
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("Backspace")
+    page.keyboard.type(str(value))
+    page.keyboard.press("Tab")
+
+
+def _repaste_single_row(page, record, row_index: int, col_defs) -> bool:
+    """Paste one row into an existing grid row so D365 resolves its lookup cells."""
+    date_rows = _journal_row_cells(page, _DATE_CELL_SELS)
+    if row_index >= len(date_rows) or not date_rows[row_index]:
+        print(f"Warning: No Date cell for row {row_index + 1} ({len(date_rows)} rows mapped).")
+        return False
+    if not _focus_row_cell(page, date_rows[row_index]):
+        print(f"Warning: Could not focus row {row_index + 1} to paste.")
+        return False
+    _set_page_clipboard(page, build_paste_clipboard_text([record], col_defs))
+    page.keyboard.press("ControlOrMeta+v")
+    page.wait_for_timeout(250)
+    _confirm_unsaved_changes_dialog(page)
+    print(f"Row {row_index + 1}: pasted row.")
+    return True
+
+
+def _normalize_cell_text(value: str) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    if text.startswith("Segmented Entry control"):
+        return ""
+    if len(text) > 80:
+        return ""
+    return text
+
+
+def _read_repair_field(page, row_index: int, spec: dict) -> str:
+    try:
+        field = _journal_field_locator(page, row_index, **spec)
+        current = (field.input_value() or "").strip()
+        if current:
+            return _normalize_cell_text(current)
+        try:
+            title = field.get_attribute("title") or ""
+            return _normalize_cell_text(title)
+        except PlaywrightError:
+            return ""
+    except PlaywrightError:
+        return ""
+
+
+def _fill_repair_field(page, row_index: int, spec: dict, value: str) -> bool:
+    try:
+        field = _journal_field_locator(page, row_index, **spec)
+        try:
+            field.evaluate(
+                "el => { el.scrollIntoView({ block: 'center', inline: 'center' }); }"
+            )
+        except PlaywrightError:
+            pass
+        _fill_text_field_with_retry(field, value)
+        return True
+    except (PlaywrightTimeoutError, PlaywrightError) as err:
+        print(f"Warning: Could not fill row {row_index + 1} field: {err}")
+        return False
+
+
+def _lookup_columns(page) -> list:
+    """Candidate cell ids for every lookup column, read once per pass."""
+    return [
+        (key, label, _journal_row_cells(page, selectors))
+        for key, label, selectors in _LOOKUP_REPAIR_FIELDS
+    ]
+
+
+def _log_grid_row_state(page, records) -> None:
+    for idx in range(len(records)):
+        parts = []
+        for key, label, spec in _REPAIR_FIELD_SPECS:
+            parts.append(f"{label}='{_read_repair_field(page, idx, spec)}'")
+        print(f"Row {idx + 1} state: " + " | ".join(parts))
+
+
+def _mismatched_repair_fields(page, records) -> list:
+    """Rows whose lookup fields differ from the source data."""
+    mismatches = []
+    for idx, record in enumerate(records):
+        for key, label, spec in _REPAIR_FIELD_SPECS:
+            expected = str(record.get(key, "")).strip()
+            if not expected:
+                continue
+            current = _read_repair_field(page, idx, spec)
+            if current.casefold() != expected.casefold():
+                mismatches.append((idx, key, label, spec))
+    return mismatches
+
+
+def _type_missing_lookup_cells(page, records) -> int:
+    """Fill lookup fields that a paste left empty. Returns how many fields were written."""
+    written = 0
+    current_row = None
+    for idx, key, label, spec in _mismatched_repair_fields(page, records):
+        expected = str(records[idx].get(key, "")).strip()
+        print(f"Row {idx + 1}: {label} is not set; filling it.")
+        if _fill_repair_field(page, idx, spec, expected):
+            written += 1
+        page.wait_for_timeout(150)
+        _confirm_unsaved_changes_dialog(page)
+        if current_row is not None and current_row != idx:
+            _save_journal_grid(page, f"row {current_row + 1} follow-up")
+        current_row = idx
+    if current_row is not None:
+        _save_journal_grid(page, f"row {current_row + 1} follow-up")
+    _dismiss_blocking_modal(page)
+    return written
+
+
+def _row_account_resolved(page, record, row_index: int) -> bool:
+    expected = str(record.get("account", "")).strip()
+    if not expected:
+        return False
+    account_spec = _REPAIR_FIELD_SPECS[0][2]
+    return _read_repair_field(page, row_index, account_spec).casefold() == expected.casefold()
+
+
+def _repair_pasted_rows(page, records, col_defs) -> None:
+    """Re-paste each row on its own: the bulk paste only resolves lookups on initialized rows."""
+    print(f"Re-pasting {len(records)} rows one by one ({_journal_row_count(page)} grid rows detected).")
+    for idx, record in enumerate(records):
+        if _row_account_resolved(page, record, idx):
+            print(f"Row {idx + 1}: already resolved, skipping re-paste.")
+            continue
+        if _repaste_single_row(page, record, idx, col_defs):
+            # Save before leaving the row, otherwise D365 blocks the next row with a save prompt.
+            _save_journal_grid(page, f"row {idx + 1}")
+        _dismiss_blocking_modal(page)
+
+    # Verify against saved state: D365 silently reverts values it rejects during validation.
+    for round_number in (1, 2):
+        _log_grid_row_state(page, records)
+        _type_missing_lookup_cells(page, records)
+        if not _mismatched_repair_fields(page, records):
+            print("All lookup cells match the source data.")
+            return
+        _save_journal_grid(page, f"verify round {round_number}")
+
+    reverted = [
+        f"row {idx + 1} {label}"
+        for idx, _key, label, _spec in _mismatched_repair_fields(page, records)
+    ]
+    if reverted:
+        print(
+            "Warning: D365 did not keep these values after saving: "
+            + ", ".join(reverted)
+            + ". Check the D365 setup for those fields (validation is clearing them)."
+        )
+
+
 def _paste_bulk_chunk(page, records, col_defs) -> None:
     if build_paste_clipboard_text is None:
         raise RuntimeError("clipboard_export module is not available.")
@@ -1585,18 +2163,278 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     _focus_journal_row_for_paste(page, 0)
     _set_page_clipboard(page, paste_text)
     page.keyboard.press("ControlOrMeta+v")
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(250)
 
     expected_rows = len(records)
-    for _ in range(30):
-        row_count = _journal_line_rows(page).count()
+    row_count = 0
+    for _ in range(60):
+        row_count = _journal_row_count(page)
         if row_count >= expected_rows:
             break
-        page.wait_for_timeout(300)
-    print(
-        f"Bulk paste applied for {expected_rows} rows "
-        f"(grid rows visible: {_journal_line_rows(page).count()})."
+        page.wait_for_timeout(150)
+    print(f"Bulk paste applied for {expected_rows} rows (grid rows visible: {row_count}).")
+    _confirm_unsaved_changes_dialog(page)
+    _save_journal_grid(page, "after paste")
+    _repair_pasted_rows(page, records, col_defs)
+
+
+def _read_journal_batch_number(page) -> str:
+    """Read journal batch number from the customer payment journal caption."""
+    try:
+        batch = page.evaluate(
+            """
+            () => {
+                const candidates = [];
+                const push = (value) => {
+                    const text = String(value || '').trim();
+                    if (text) candidates.push(text);
+                };
+                push(document.title);
+                document.querySelectorAll(
+                    '[data-dyn-role="FormCaption"], .formCaption, h1, h2, [role="heading"]'
+                ).forEach((el) => push(el.innerText || el.textContent));
+                push(document.body ? document.body.innerText.slice(0, 4000) : '');
+                for (const text of candidates) {
+                    const pipeMatch = text.match(/Customer payments\\s*\\|\\s*(REL-\\d+)/i);
+                    if (pipeMatch) return pipeMatch[1];
+                    const looseMatch = text.match(/\\b(REL-\\d{5,})\\b/i);
+                    if (looseMatch) return looseMatch[1];
+                }
+                return '';
+            }
+            """
+        )
+    except PlaywrightError as err:
+        print(f"Warning: Could not read journal batch number: {err}")
+        return ""
+    batch = str(batch or "").strip()
+    if batch:
+        print(f"Journal batch number: {batch}")
+    return batch
+
+
+def _click_first_matching_button(page, labels: list[str], *, timeout_ms: int = 8000) -> bool:
+    for label in labels:
+        try:
+            button = page.get_by_role("button", name=label, exact=False)
+            if button.count() > 0:
+                button.first.click(timeout=timeout_ms)
+                return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+        try:
+            link = page.get_by_role("link", name=label, exact=False)
+            if link.count() > 0:
+                link.first.click(timeout=timeout_ms)
+                return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+    return False
+
+
+def _upload_file_to_dmf(page, file_path: Path) -> None:
+    path = str(file_path.resolve())
+    uploaded = False
+    for selector in ('input[type="file"]', 'input[type="file"][accept*="xlsx"]'):
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            continue
+        for index in range(min(locator.count(), 5)):
+            try:
+                locator.nth(index).set_input_files(path, timeout=15000)
+                uploaded = True
+                break
+            except (PlaywrightTimeoutError, PlaywrightError):
+                continue
+        if uploaded:
+            break
+    if not uploaded:
+        raise RuntimeError("Could not find a file upload control in Data management import.")
+    page.wait_for_timeout(500)
+
+
+def _poll_dmf_import_status(page, timeout_ms: int = 300000) -> str:
+    deadline = time.time() + (timeout_ms / 1000.0)
+    last_status = ""
+    while time.time() < deadline:
+        try:
+            status = page.evaluate(
+                """
+                () => {
+                    const text = (document.body && document.body.innerText) ? document.body.innerText : '';
+                    const lines = text.split('\\n').map((line) => line.trim()).filter(Boolean);
+                    const hits = lines.filter((line) => /(succeeded|failed|partial|completed|error|staging)/i.test(line));
+                    return hits.slice(-8).join(' | ');
+                }
+                """
+            )
+        except PlaywrightError:
+            status = ""
+        status = str(status or "").strip()
+        if status and status != last_status:
+            print(f"DMF status: {status}")
+            last_status = status
+        lowered = status.lower()
+        if any(token in lowered for token in ("succeeded", "completed successfully", "import completed")):
+            return "success"
+        if "partial" in lowered and "succeeded" in lowered:
+            return "partial"
+        if any(token in lowered for token in ("failed", "error", "could not", "not found")):
+            return "failed"
+        page.wait_for_timeout(2000)
+    return "timeout"
+
+
+def _collect_dmf_staging_errors(page) -> list[str]:
+    try:
+        errors = page.evaluate(
+            """
+            () => {
+                const lines = (document.body && document.body.innerText)
+                    ? document.body.innerText.split('\\n')
+                    : [];
+                return lines
+                    .map((line) => line.trim())
+                    .filter((line) => /(error|failed|not found|invalid|duplicate|staging)/i.test(line))
+                    .slice(0, 20);
+            }
+            """
+        )
+    except PlaywrightError:
+        return []
+    return [str(item).strip() for item in (errors or []) if str(item).strip()]
+
+
+def _run_dmf_import(page, file_path: Path, journal_batch_number: str) -> None:
+    if build_import_workbook is None:
+        raise RuntimeError("dmf_import module is required for DMF import mode.")
+
+    print(f"Starting DMF import for journal {journal_batch_number}...")
+    page.goto(
+        _d365_workspace_url("DataManagementWorkspace"),
+        timeout=int(CONFIG.get("page_load_timeout_ms", 60000)),
+        wait_until="domcontentloaded",
     )
+    _wait_for_journal_grid_idle(page)
+
+    if not _click_first_matching_button(page, ["Import", "Standard data import", "Import data"]):
+        raise RuntimeError("Could not open Data management Import from the workspace.")
+
+    page.wait_for_timeout(800)
+    project_name = f"SobhaCustPay_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if _click_first_matching_button(page, ["New", "Create", "Add"]):
+        page.wait_for_timeout(500)
+        for label in ("Name", "Project name", "Description"):
+            try:
+                field = page.get_by_label(label, exact=False)
+                if field.count() > 0:
+                    field.first.fill(project_name, timeout=5000)
+                    break
+            except (PlaywrightTimeoutError, PlaywrightError):
+                continue
+
+    if not _click_first_matching_button(page, ["Add file", "Upload", "Add", "Browse"]):
+        print("Warning: Add file button not found; attempting direct file upload.")
+    _upload_file_to_dmf(page, file_path)
+
+    _click_first_matching_button(
+        page,
+        ["Customer payment journal line", "CustomerPaymentJournalLine", "Map entity"],
+    )
+    page.wait_for_timeout(500)
+
+    if not _click_first_matching_button(page, ["Import", "Import now", "Run", "Execute", "OK"]):
+        raise RuntimeError("Could not start the DMF import execution.")
+
+    outcome = _poll_dmf_import_status(page)
+    if outcome in {"failed", "partial", "timeout"}:
+        details = _collect_dmf_staging_errors(page)
+        detail_text = "\n".join(f"- {line}" for line in details[:10]) if details else "(no staging text captured)"
+        raise RuntimeError(
+            f"DMF import ended with status '{outcome}' for journal {journal_batch_number}.\n{detail_text}"
+        )
+    print(f"DMF import completed for journal {journal_batch_number}.")
+
+
+def _verify_imported_line_count(page, expected_rows: int) -> None:
+    row_count = _journal_row_count(page)
+    print(f"Imported journal lines visible: {row_count} (expected {expected_rows}).")
+    if row_count < expected_rows:
+        raise RuntimeError(
+            f"Imported line count mismatch: expected at least {expected_rows}, saw {row_count}."
+        )
+
+
+def _process_dmf_import_chunks(page, records) -> list:
+    if build_import_workbook is None:
+        raise RuntimeError("dmf_import module is required for DMF import mode.")
+
+    company = d365_company_from_config()
+    if company:
+        for record in records:
+            if not str(record.get("company", "")).strip():
+                record["company"] = company
+
+    chunks = _chunk_records(records, BULK_PASTE_BATCH_SIZE)
+    if not chunks:
+        print("No records to process in DMF import mode.")
+        return []
+
+    all_processed = []
+    total_chunks = len(chunks)
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        print(
+            f"Starting DMF import chunk {chunk_index}/{total_chunks} "
+            f"({len(chunk)} transactions)"
+        )
+        _open_journal_lines(page)
+        journal_batch_number = _read_journal_batch_number(page)
+        if not journal_batch_number:
+            raise RuntimeError("Could not read journal batch number before DMF import.")
+
+        import_path = build_import_workbook(chunk, journal_batch_number, company)
+        _run_dmf_import(page, import_path, journal_batch_number)
+
+        page.goto(
+            CONFIG["d365_url"],
+            timeout=int(CONFIG.get("page_load_timeout_ms", 60000)),
+            wait_until="domcontentloaded",
+        )
+        _wait_for_d365_ready(page)
+        _open_journal_lines(page)
+        _verify_imported_line_count(page, len(chunk))
+
+        _disable_automation_visual_overlays(page)
+        _show_bulk_paste_toast(page, 3000)
+        _wait_for_bulk_post_click(page)
+        _wait_for_post_confirmation(page)
+
+        try:
+            page.get_by_text("List General Payment fee Bank").click()
+        except PlaywrightError as err:
+            print(f"Warning: Could not return to voucher list view: {err}")
+
+        voucher_values = _extract_chunk_voucher_values(page, len(chunk))
+        print(f"Chunk {chunk_index} vouchers: {voucher_values}")
+        ok, patch_msg = _bulk_update_receipts(chunk, voucher_values)
+        print(f"bulkUpdateReceipt chunk {chunk_index}: {'OK' if ok else 'SKIP/FAIL'}")
+        print(patch_msg)
+        all_processed.extend(chunk)
+
+        if chunk_index < total_chunks:
+            action = _wait_for_batch_action(
+                page,
+                is_last_sub_batch=False,
+                current_index=chunk_index,
+                total_sub_batches=total_chunks,
+            )
+            if action == "close":
+                print("User closed DMF import before next chunk.")
+                break
+
+    _show_all_completed_overlay(page)
+    print(f"DMF import completed for {len(all_processed)} records.")
+    return all_processed
 
 
 def _process_bulk_paste_chunks(page, records, col_defs):
@@ -1833,11 +2671,11 @@ def _process_sub_batch(page, records):
             force_manual_wipe_before_fill = True
             reuse_same_row_next = False
 
-        val_date = _normalize_reference_date(record.get("value_date", "2/17/2026"))
+        val_date = _d365_date(record.get("value_date"), "2/17/2026")
         acc_no = str(record.get("account", "")).strip()
         credit_amt = record.get("credit", "25,000")
         offset_acc = str(record.get("offset_account", "")).strip()
-        ref_date = _normalize_reference_date(record.get("reference_date", "2/17/2026"))
+        ref_date = _d365_date(record.get("reference_date"), "2/17/2026")
         pay_ref = record.get("payment_reference", "YESBANK")
         pay_method = record.get("method_of_payment", "Wire Wire Transfer")
         if not acc_no:
@@ -2115,7 +2953,13 @@ def _process_sub_batch(page, records):
     return processed_records
 
 
-def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
+def test_final8(
+    records=None,
+    *,
+    bulk_paste_mode=True,
+    clipboard_col_defs=None,
+    line_entry_mode: str | None = None,
+):
     issues = get_config_issues(require_auth_state=True)
     if issues:
         raise ValueError("Configuration issue(s):\n- " + "\n- ".join(issues))
@@ -2141,14 +2985,21 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
             "sub_batch_id": "DEFAULT_BATCH_1",
         }]
 
-    mode_label = "bulk paste" if bulk_paste_mode else "legacy fill"
+    entry_mode = (line_entry_mode or line_entry_mode_from_config()).strip().lower()
+    if entry_mode not in LINE_ENTRY_MODES:
+        entry_mode = "paste"
+
+    if entry_mode == "dmf":
+        mode_label = "DMF import"
+    else:
+        mode_label = "bulk paste" if bulk_paste_mode else "legacy fill"
     print(f"Starting automation ({mode_label}) with {len(records)} records...")
     if not sync_playwright:
         print("Playwright is not installed. Skipping automation.")
         raise RuntimeError("Playwright is not installed.")
 
     batch_id = str(records[0].get("batch_id", "")).strip() or "UNASSIGNED"
-    keep_browser_open = bulk_paste_mode
+    keep_browser_open = bulk_paste_mode or entry_mode == "dmf"
 
     with sync_playwright() as playwright:
         browser = None
@@ -2172,7 +3023,16 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
             )
             _wait_for_d365_ready(page)
 
-            if bulk_paste_mode:
+            if entry_mode == "dmf":
+                if build_import_workbook is None:
+                    raise RuntimeError("dmf_import module is required for DMF import mode.")
+                chunk_count = len(_chunk_records(records, BULK_PASTE_BATCH_SIZE))
+                print(
+                    f"DMF import mode: {len(records)} records in {chunk_count} "
+                    f"batch(es) of up to {BULK_PASTE_BATCH_SIZE}."
+                )
+                _process_dmf_import_chunks(page, records)
+            elif bulk_paste_mode:
                 if normalize_col_defs is None or build_paste_clipboard_text is None:
                     raise RuntimeError("clipboard_export module is required for bulk paste mode.")
                 col_defs = normalize_col_defs(clipboard_col_defs or load_clipboard_col_defs())
@@ -2188,6 +3048,11 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                     f"Bulk paste mode: {len(records)} records in {chunk_count} "
                     f"batch(es) of up to {BULK_PASTE_BATCH_SIZE}."
                 )
+                company = d365_company_from_config()
+                if company:
+                    for record in records:
+                        if not str(record.get("company", "")).strip():
+                            record["company"] = company
                 _open_journal_lines(page)
                 _process_bulk_paste_chunks(page, records, col_defs)
             else:

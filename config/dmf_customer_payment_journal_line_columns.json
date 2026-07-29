@@ -1,0 +1,28 @@
+{
+  "_comment": "Customer payment journal line entity fields for DMF import. Derived from Open-in-Excel template binding (CustomerPaymentJournalLine) and D365 entity export conventions.",
+  "entity_name": "Customer payment journal line",
+  "entity_technical_name": "CustomerPaymentJournalLine",
+  "source": "CustomerPaymentJournalTemplate add-in RuntimeConfig + DMF entity mapping",
+  "columns": [
+    {"field": "JournalBatchNumber", "label": "Journal batch number", "required": true},
+    {"field": "LineNumber", "label": "Line number", "required": true},
+    {"field": "dataAreaId", "label": "Company", "required": true},
+    {"field": "AccountType", "label": "Account type", "required": true, "default": "Cust"},
+    {"field": "AccountDisplayValue", "label": "Account", "required": true},
+    {"field": "TransactionDate", "label": "Date", "required": true},
+    {"field": "TransactionText", "label": "Description", "required": false},
+    {"field": "DebitAmount", "label": "Debit", "required": false},
+    {"field": "CreditAmount", "label": "Credit", "required": true},
+    {"field": "CurrencyCode", "label": "Currency", "required": true},
+    {"field": "OffsetAccountType", "label": "Offset account type", "required": true, "default": "Bank"},
+    {"field": "OffsetAccountDisplayValue", "label": "Offset account", "required": true},
+    {"field": "PaymentMethodName", "label": "Method of payment", "required": true},
+    {"field": "PaymentReference", "label": "Payment reference", "required": true}
+  ],
+  "dmf_ui_notes": {
+    "workspace_menu_item": "DataManagementWorkspace",
+    "import_entry_points": ["Import", "Standard data import", "Import data"],
+    "execute_buttons": ["Import", "Import now", "Run", "Execute"],
+    "entity_picker_label": "Customer payment journal line"
+  }
+}

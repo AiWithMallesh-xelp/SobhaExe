@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,49 @@ EXTRA_FIELD_LABELS = {
 }
 PRESET_FIELD_LABELS = {**TRANSACTION_FIELD_LABELS, **EXTRA_FIELD_LABELS}
 PRESET_FIELD_KEYS = list(dict.fromkeys(TRANSACTION_FIELD_KEYS + list(EXTRA_FIELD_LABELS)))
+DATE_FIELD_KEYS = frozenset({"date", "value_date", "reference_date", "account_date"})
+
+
+def normalize_date(date_str):
+    """
+    Normalize date string to mm/dd/yyyy as standard format
+    """
+    if not date_str:
+        return None
+
+    date_str = str(date_str).strip()
+
+    # Handle Excel date serial numbers
+    try:
+        if date_str.isdigit() or (date_str.replace('.', '', 1).isdigit() and date_str.count('.') == 1):
+            excel_date = float(date_str)
+            if 30000 < excel_date < 50000:
+                base_date = datetime(1899, 12, 30)  # Excel's day 0
+                date_obj = base_date + timedelta(days=int(excel_date))
+                return date_obj.strftime('%m/%d/%Y')
+    except (ValueError, OverflowError):
+        pass
+
+    date_formats = [
+        # US formats first, since output is US-ordered
+        '%m/%d/%Y', '%m-%d-%Y', '%m.%d.%Y',
+        '%m/%d/%y', '%m-%d-%y', '%m.%d.%y',
+        '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%Y%m%d',
+        '%d-%m-%Y', '%d/%m/%Y', '%d.%m.%Y',
+        '%d-%m-%y', '%d/%m/%y', '%d.%m.%y',
+        '%b %d, %Y', '%B %d, %Y', '%d %b %Y', '%d %B %Y',
+        '%d-%b-%y', '%d-%B-%y', '%d-%b-%Y', '%d-%B-%Y',
+        '%d %b %y', '%d %B %y', '%b %d %y', '%B %d %y',
+        '%Y-%b-%d', '%y-%b-%d',
+    ]
+
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(date_str, fmt).strftime('%m/%d/%Y')
+        except ValueError:
+            continue
+
+    return None
 
 
 def normalize_col_def(item) -> dict:
@@ -102,8 +146,14 @@ def resolve_clipboard_cell(txn: dict, col: dict) -> str:
     key = col.get("key", "")
     value = txn.get(key, "")
     if value is None or str(value).strip() == "":
-        return str(col.get("default_value", "") or "")
-    return str(value)
+        raw = str(col.get("default_value", "") or "")
+    else:
+        raw = str(value)
+    if key in DATE_FIELD_KEYS and raw.strip():
+        normalized = normalize_date(raw)
+        if normalized:
+            return normalized
+    return raw
 
 
 def clipboard_columns_path() -> Path:

@@ -43,6 +43,7 @@ from clipboard_export import (
     load_clipboard_col_defs,
     normalize_col_def,
     normalize_col_defs,
+    normalize_date,
     save_clipboard_col_defs,
     slug_custom_field_key,
 )
@@ -276,6 +277,16 @@ HEADERS = [
 ]
 
 COL_WIDTHS = [50, 220, 140, 160, 140, 280, 180, 140, 360]
+
+DATE_FIELD_KEYS = frozenset({"date", "value_date", "reference_date", "account_date"})
+
+
+def format_d365_date(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    normalized = normalize_date(raw)
+    return normalized or raw
 
 # Columns shown in the batch transaction table.
 DISPLAY_COL_DEFS = [
@@ -955,33 +966,36 @@ class Application(tk.Tk):
         self.clipboard_col_defs = load_clipboard_col_defs()
         self.bulk_paste_mode_var = tk.BooleanVar(value=self._load_bulk_paste_mode_default())
 
-        # Professional Color Palette (modal/card style)
+        # SOBHA Premium Theme Palette
         self.colors = {
-            "frame_bg": "#f5f7fb",
-            "header_bg": "#c6d7fb",
-            "card_bg": "#ffffff",
-            "card_border": "#d9dee8",
-            "card_selected_border": "#8fb0ff",
-            "card_header_bg": "#f6f8fc",
-            "table_shell_bg": "#ffffff",
-            "table_border": "#dfe4ee",
-            "table_header_bg": "#f9fafd",
-            "row_bg_even": "#ffffff",
-            "row_bg_odd": "#fcfdff",
-            "row_sep": "#e8ecf3",
-            "title": "#1f2a44",
-            "text": "#2e3b57",
-            "muted": "#6b7280",
-            "accent": "#2e5bff",
-            "success": "#16a34a",
-            "tab_bg": "#eef2f8",
-            "tab_active_bg": "#ffffff",
-            "tab_active_fg": "#1f2a44",
-            "tab_fg": "#5b6474",
-            "pill_bg": "#e5e7eb",
-            "selector_border": "#8fb0ff",
-            "selector_bg": "#ffffff",
-            "selector_active": "#1d4ed8",
+            "primary_bg": "#5E5453",          # SOBHA Primary Header / Sidebar
+            "white": "#FFFFFF",
+            "page_bg": "#EAE5E4",             # Light gray page background
+            "table_header_bg": "#D2D5DB",     # Table header gray
+            "card_bg": "#F4F4F4",             # Light gray container card
+            "dark_text": "#313232",           # Dark text
+            "muted_text": "#9B9A9B",          # Medium gray text
+            "border_gray": "#BCBABA",         # Border gray
+            "secondary_text": "#777676",      # Secondary text gray
+            "near_black": "#0F0F0F",          # Near-black text
+            "frame_bg": "#EAE5E4",
+            "card_border": "#BCBABA",
+            "card_selected_border": "#5E5453",
+            "card_header_bg": "#FFFFFF",
+            "table_shell_bg": "#FFFFFF",
+            "table_border": "#BCBABA",
+            "row_bg_even": "#FFFFFF",
+            "row_bg_odd": "#F8F9FA",
+            "row_sep": "#E2E8F0",
+            "title": "#313232",
+            "text": "#313232",
+            "muted": "#777676",
+            "accent": "#2563EB",
+            "success": "#16A34A",
+            "pill_bg": "#D2D5DB",
+            "selector_border": "#BCBABA",
+            "selector_bg": "#FFFFFF",
+            "selector_active": "#5E5453",
         }
 
         # Initialize Forest Theme (fallback to default if missing)
@@ -992,123 +1006,233 @@ class Application(tk.Tk):
         except Exception:
             pass
 
-        style.configure("PrimaryAction.TButton", font=("Segoe UI", 10, "bold"))
+        # Main Root Frame
+        root_frame = tk.Frame(self, bg=self.colors["page_bg"])
+        root_frame.pack(fill="both", expand=True)
 
-        # --- Modal-like outer frame ---
-        modal = tk.Frame(
-            self,
-            bg=self.colors["frame_bg"],
-            highlightthickness=0,
-            bd=0,
-        )
-        modal.pack(fill="both", expand=True, padx=0, pady=0)
+        # ===================================================================
+        # 1. TOP HEADER BAR (#5E5453) - Clean Brand & Functional Toolbar
+        # ===================================================================
+        header_bar = tk.Frame(root_frame, bg=self.colors["primary_bg"], padx=18, pady=10)
+        header_bar.pack(fill="x")
 
-        content = tk.Frame(modal, bg=self.colors["frame_bg"], padx=12, pady=8)
-        content.pack(fill="both", expand=True)
+        # Brand Title Left
+        brand_left = tk.Frame(header_bar, bg=self.colors["primary_bg"])
+        brand_left.pack(side="left")
 
-        # --- Toolbar row ---
-        toolbar = tk.Frame(content, bg=self.colors["frame_bg"])
-        toolbar.pack(fill="x", pady=(0, 10))
+        try:
+            self.sobha_brand_img = tk.PhotoImage(file=p("sobha_logo_brand.png"))
+            logo_lbl = tk.Label(brand_left, image=self.sobha_brand_img, bg=self.colors["primary_bg"])
+            logo_lbl.pack(side="left", padx=(0, 10))
+        except Exception:
+            pass
 
-        self.section_count_label = tk.Label(
-            toolbar,
-            text="Sales Acc Receipt Gen (0 batches / 0 sub-batches)",
-            bg=self.colors["frame_bg"],
-            fg=self.colors["title"],
-            font=("Segoe UI", 10),
-        )
-        self.section_count_label.pack(side="left")
+        brand_text_wrap = tk.Frame(brand_left, bg=self.colors["primary_bg"])
+        brand_text_wrap.pack(side="left")
 
-        top_actions = tk.Frame(toolbar, bg=self.colors["frame_bg"])
-        top_actions.pack(side="right")
-        _make_button(
-            top_actions,
-            text="⚙",
-            command=self._open_clipboard_column_settings,
-            cursor="hand2",
-            relief="flat",
-            bg=self.colors["pill_bg"],
-            fg=self.colors["title"],
-            activebackground="#d1d5db",
-            activeforeground=self.colors["title"],
-            font=("Segoe UI", 14),
-            padx=10,
-            pady=2,
-        ).pack(side="right", padx=(0, 8))
-        self.login_button = _make_button(
-            top_actions,
-            text="Login",
-            command=self._run_login_automation,
-            cursor="hand2",
-            relief="flat",
-            bg=self.colors["success"],
-            fg="white",
-            activebackground="#14913f",
-            activeforeground="white",
-            font=("Segoe UI", 10, "bold"),
-            padx=16,
-            pady=7,
-        )
-        self.login_button.pack(side="right", padx=(0, 8))
+        tk.Label(
+            brand_text_wrap,
+            text="Sobha Reconciliation",
+            bg=self.colors["primary_bg"],
+            fg=self.colors["white"],
+            font=("Segoe UI", 13, "bold"),
+            anchor="w",
+        ).pack(anchor="w")
+
+        tk.Label(
+            brand_text_wrap,
+            text="Sales Acc Receipt Gen",
+            bg=self.colors["primary_bg"],
+            fg="#D2D5DB",
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(anchor="w")
+
+        # Functional Toolbar Actions Right
+        header_actions = tk.Frame(header_bar, bg=self.colors["primary_bg"])
+        header_actions.pack(side="right")
 
         _make_button(
-            top_actions,
-            text="Refresh",
-            command=self._load_transactions,
-            cursor="hand2",
-            relief="flat",
-            bg="#0ea5a4",
-            fg="white",
-            activebackground="#0b8f8e",
-            activeforeground="white",
-            font=("Segoe UI", 10, "bold"),
-            padx=14,
-            pady=7,
-        ).pack(side="right", padx=(0, 8))
-
-        secondary_actions = tk.Frame(content, bg=self.colors["frame_bg"])
-        secondary_actions.pack(fill="x", pady=(0, 8))
-        tk.Checkbutton(
-            secondary_actions,
-            text="Bulk paste mode",
-            variable=self.bulk_paste_mode_var,
-            command=self._persist_bulk_paste_mode,
-            bg=self.colors["frame_bg"],
-            activebackground=self.colors["frame_bg"],
-            fg=self.colors["title"],
-            selectcolor="white",
-            font=("Segoe UI", 10),
-            cursor="hand2",
-        ).pack(side="right", padx=(0, 12))
-        _make_button(
-            secondary_actions,
+            header_actions,
             text="Make Automation",
             command=self._submit_selection,
             relief="flat",
             cursor="hand2",
             bg=self.colors["accent"],
             fg="white",
-            activebackground="#264fdf",
-            activeforeground="white",
-            font=("Segoe UI", 11, "bold"),
-            padx=20,
-            pady=8,
-        ).pack(side="right")
+            activebackground="#1D4ED8",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=6,
+        ).pack(side="right", padx=(8, 0))
 
-        # --- Body: cards only ---
-        body_split = tk.Frame(content, bg=self.colors["frame_bg"])
+        export_btn = _make_button(
+            header_actions,
+            text="📥",
+            command=self._export_to_excel,
+            relief="flat",
+            cursor="hand2",
+            bg=self.colors["white"],
+            fg=self.colors["dark_text"],
+            activebackground="#F4F4F4",
+            font=("Segoe UI Emoji", 11),
+            padx=10,
+            pady=4,
+        )
+        export_btn.pack(side="right", padx=(8, 0))
+        self._bind_copy_button_tooltip(export_btn, "Export to Excel (.xlsx)")
+
+        refresh_btn = _make_button(
+            header_actions,
+            text="🔄",
+            command=self._load_transactions,
+            cursor="hand2",
+            relief="flat",
+            bg="#0D9488",
+            fg="white",
+            activebackground="#0F766E",
+            font=("Segoe UI Emoji", 11),
+            padx=10,
+            pady=4,
+        )
+        refresh_btn.pack(side="right", padx=(8, 0))
+        self._bind_copy_button_tooltip(refresh_btn, "Refresh transactions")
+
+        self.login_button = _make_button(
+            header_actions,
+            text="Login",
+            command=self._run_login_automation,
+            cursor="hand2",
+            relief="flat",
+            bg=self.colors["success"],
+            fg="white",
+            activebackground="#15803D",
+            font=("Segoe UI", 9, "bold"),
+            padx=14,
+            pady=6,
+        )
+        self.login_button.pack(side="right", padx=(8, 0))
+
+        _make_button(
+            header_actions,
+            text="⚙ Settings",
+            command=self._open_clipboard_column_settings,
+            cursor="hand2",
+            relief="flat",
+            bg=self.colors["pill_bg"],
+            fg=self.colors["dark_text"],
+            activebackground="#BCBABA",
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=6,
+        ).pack(side="right", padx=(8, 0))
+
+        # ===================================================================
+        # 2. CONTROLS & FILTER CARD (#F4F4F4)
+        # ===================================================================
+        body_content = tk.Frame(root_frame, bg=self.colors["page_bg"], padx=18, pady=14)
+        body_content.pack(fill="both", expand=True)
+
+        filter_card = tk.Frame(
+            body_content,
+            bg=self.colors["card_bg"],
+            highlightbackground=self.colors["border_gray"],
+            highlightthickness=1,
+            padx=16,
+            pady=12,
+        )
+        filter_card.pack(fill="x", pady=(0, 14))
+
+        f_grid = tk.Frame(filter_card, bg=self.colors["card_bg"])
+        f_grid.pack(fill="x")
+
+        # Status Filter
+        f_status_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
+        f_status_col.pack(side="left", padx=(0, 18))
+        tk.Label(
+            f_status_col,
+            text="FILTER STATUS",
+            bg=self.colors["card_bg"],
+            fg=self.colors["secondary_text"],
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="w", pady=(0, 4))
+
+        self.match_filter_var = tk.StringVar(value="All")
+        status_cb = ttk.Combobox(
+            f_status_col,
+            textvariable=self.match_filter_var,
+            state="readonly",
+            values=["All", "Unmatched", "Posted", "Matched", "All Splits Completed"],
+            width=20,
+            font=("Segoe UI", 9),
+        )
+        status_cb.pack(anchor="w")
+        status_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_filter())
+
+        # Search Here Entry
+        f_search_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
+        f_search_col.pack(side="left", fill="x", expand=True, padx=(0, 18))
+        tk.Label(
+            f_search_col,
+            text="SEARCH TRANSACTIONS",
+            bg=self.colors["card_bg"],
+            fg=self.colors["secondary_text"],
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="w", pady=(0, 4))
+
+        search_wrap = tk.Frame(
+            f_search_col,
+            bg=self.colors["white"],
+            highlightbackground=self.colors["border_gray"],
+            highlightthickness=1,
+        )
+        search_wrap.pack(fill="x")
+        self.search_var = tk.StringVar()
+        search_entry = tk.Entry(
+            search_wrap,
+            textvariable=self.search_var,
+            bg=self.colors["white"],
+            fg=self.colors["dark_text"],
+            font=("Segoe UI", 9),
+            bd=0,
+            highlightthickness=0,
+        )
+        search_entry.pack(side="left", fill="x", expand=True, padx=8, pady=4)
+        tk.Label(search_wrap, text="🔍", bg=self.colors["white"], fg=self.colors["muted_text"]).pack(side="right", padx=6)
+        self.search_var.trace_add("write", lambda *args: self._apply_filter())
+
+        # Bulk Paste Mode Checkbox
+        f_chk_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
+        f_chk_col.pack(side="right")
+        tk.Checkbutton(
+            f_chk_col,
+            text="Bulk paste mode",
+            variable=self.bulk_paste_mode_var,
+            command=self._persist_bulk_paste_mode,
+            bg=self.colors["card_bg"],
+            activebackground=self.colors["card_bg"],
+            fg=self.colors["dark_text"],
+            selectcolor="white",
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        ).pack(anchor="e", pady=(14, 0))
+
+        # ===================================================================
+        # 3. TRANSACTIONS VIEW CANVAS AREA (#EAE5E4)
+        # ===================================================================
+        body_split = tk.Frame(body_content, bg=self.colors["page_bg"])
         body_split.pack(fill="both", expand=True)
         body_split.grid_rowconfigure(0, weight=1)
         body_split.grid_columnconfigure(0, weight=1)
 
-        cards_host = tk.Frame(body_split, bg=self.colors["frame_bg"])
+        cards_host = tk.Frame(body_split, bg=self.colors["page_bg"])
         cards_host.grid(row=0, column=0, sticky="nsew")
         cards_host.grid_rowconfigure(0, weight=1)
         cards_host.grid_columnconfigure(0, weight=1)
 
         self.cards_canvas = tk.Canvas(
             cards_host,
-            bg=self.colors["frame_bg"],
+            bg=self.colors["page_bg"],
             highlightthickness=0,
             bd=0,
         )
@@ -1118,36 +1242,54 @@ class Application(tk.Tk):
         self.cards_canvas.grid(row=0, column=0, sticky="nsew")
         cards_scroll.grid(row=0, column=1, sticky="ns")
 
-        self.cards_frame = tk.Frame(self.cards_canvas, bg=self.colors["frame_bg"])
+        self.cards_frame = tk.Frame(self.cards_canvas, bg=self.colors["page_bg"])
         self.cards_canvas_window_id = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
         self.cards_frame.bind("<Configure>", self._on_cards_frame_configure)
         self.cards_canvas.bind("<Configure>", self._on_cards_canvas_configure)
-        # Bind scroll globally — Enter/Leave approach breaks on macOS Tk 9.0
-        # because child widgets (batch cards) trigger <Leave> on the canvas
         self.bind_all("<MouseWheel>", self._on_cards_mousewheel)
         self.bind_all("<Button-4>", self._on_cards_mousewheel)
         self.bind_all("<Button-5>", self._on_cards_mousewheel)
 
-        # --- Footer ---
-        footer = tk.Frame(modal, bg=self.colors["frame_bg"], padx=12, pady=10)
+        # Footer Status Bar
+        footer = tk.Frame(root_frame, bg=self.colors["page_bg"], padx=18, pady=8)
         footer.pack(fill="x")
+
+        self.section_count_label = tk.Label(
+            footer,
+            text="Sales Acc Receipt Gen (0 batches / 0 sub-batches)",
+            font=("Segoe UI", 9),
+            fg=self.colors["muted"],
+            bg=self.colors["page_bg"],
+        )
+        self.section_count_label.pack(side="left")
 
         self.row_count_label = tk.Label(
             footer,
             text="0 batches | 0 sub-batches",
             font=("Segoe UI", 9),
             fg=self.colors["muted"],
-            bg=self.colors["frame_bg"],
+            bg=self.colors["page_bg"],
         )
+        self.row_count_label.pack(side="left", padx=(12, 0))
+
+        self.status_bar = tk.Label(
+            footer,
+            text="Ready",
+            fg=self.colors["muted"],
+            bg=self.colors["page_bg"],
+            font=("Segoe UI", 9),
+        )
+        self.status_bar.pack(side="right")
         self.row_count_label.pack(side="left")
 
         self.status_bar = tk.Label(
             footer,
             text="Ready",
             fg=self.colors["muted"],
-            bg=self.colors["frame_bg"],
+            bg=self.colors["page_bg"],
             font=("Segoe UI", 9),
         )
+        self.status_bar.pack(side="right")
         self.status_bar.pack(side="left", padx=(10, 0))
 
         self._browser_check_prompted = False
@@ -1331,7 +1473,7 @@ class Application(tk.Tk):
     def _map_transaction(self, txn: dict, batch_id: str = "", sub_batch_id: str = "") -> dict:
         mapped_batch_id = str(txn.get("batch_id", "")).strip() or batch_id or "UNASSIGNED"
         mapped_sub_batch_id = str(txn.get("sub_batch_id", "")).strip() or sub_batch_id or mapped_batch_id
-        account_date = str(txn.get("account_date", "")).strip()
+        account_date = format_d365_date(txn.get("account_date", ""))
         payment_reference = str(txn.get("transaction_description", "")).strip()
         mapped = {
             "uuid": str(txn.get("uuid", "")).strip(),
@@ -1340,7 +1482,11 @@ class Application(tk.Tk):
             "date": account_date,
             "value_date": account_date,
             "voucher": str(txn.get("receipt_number", "")).strip(),
-            "company": "",
+            "company": (
+                automation_module.d365_company_from_config()
+                if automation_module and hasattr(automation_module, "d365_company_from_config")
+                else ""
+            ),
             "account": str(txn.get("account_number", "")).strip(),
             "account_name": "",
             "payee_name": "",
@@ -1530,7 +1676,10 @@ class Application(tk.Tk):
                 continue
             for key in KEY_MAP[1:]:
                 if key in row_widgets:
-                    data_ref[key] = row_widgets[key].get()
+                    value = row_widgets[key].get()
+                    if key in DATE_FIELD_KEYS:
+                        value = format_d365_date(value)
+                    data_ref[key] = value
             if "sub_batch_id" in row_widgets:
                 data_ref["sub_batch_id"] = row_widgets["sub_batch_id"].get()
 
@@ -1731,7 +1880,11 @@ class Application(tk.Tk):
                         "sub_batch_id": tk.StringVar(value=str(record.get("sub_batch_id", ""))),
                     }
                     for key in KEY_MAP[2:]:
-                        row_widgets[key] = tk.StringVar(value=str(record.get(key, "")))
+                        value = str(record.get(key, ""))
+                        if key in DATE_FIELD_KEYS:
+                            value = format_d365_date(value)
+                            record[key] = value
+                        row_widgets[key] = tk.StringVar(value=value)
                     self.row_vars.append(row_widgets)
 
                     row_bg = self.colors["row_bg_even"] if row_index % 2 == 0 else self.colors["row_bg_odd"]
@@ -2000,9 +2153,34 @@ class Application(tk.Tk):
 
         self._sync_current_edits()
         self._render_rows(self.batch_groups)
-        self._refresh_match_counts()
-        if self.status_bar:
-            self.status_bar.config(text=self._status_text())
+    def _export_to_excel(self):
+        try:
+            from tkinter import filedialog
+            path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
+            if not path:
+                return
+            if Workbook is None:
+                messagebox.showerror("Export Error", "openpyxl is not installed.")
+                return
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "RERA Transactions"
+            ws.append(["Batch ID", "Value Date", "Account", "Credit", "Offset Account", "Method of Payment", "Reference Date", "Payment Reference"])
+            for row in self.all_rows:
+                ws.append([
+                    row.get("batch_id", ""),
+                    row.get("value_date", ""),
+                    row.get("account", ""),
+                    row.get("credit", ""),
+                    row.get("offset_account", ""),
+                    row.get("method_of_payment", ""),
+                    row.get("reference_date", ""),
+                    row.get("payment_reference", ""),
+                ])
+            wb.save(path)
+            messagebox.showinfo("Export Success", f"Successfully exported transactions to:\n{path}")
+        except Exception as err:
+            messagebox.showerror("Export Error", f"Failed to export: {err}")
 
     def _submit_selection(self):
         self._sync_current_edits()
@@ -2023,6 +2201,10 @@ class Application(tk.Tk):
             for sub_batch in selected_group.get("sub_batches", [])
             for record in sub_batch.get("transactions", [])
         ]
+        for record in selected:
+            for key in DATE_FIELD_KEYS:
+                if key in record:
+                    record[key] = format_d365_date(record.get(key, ""))
         sub_batch_count = len(selected_group.get("sub_batches", []))
         transaction_count = len(selected)
 
@@ -2296,18 +2478,34 @@ class Application(tk.Tk):
         threading.Thread(target=install_task, daemon=True).start()
 
     # ---- Automation thread (kept for integration) ----
+    def _load_line_entry_mode_default(self) -> str:
+        try:
+            config_path = self._resolve_config_path()
+            if config_path.exists():
+                with open(config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    mode = str(data.get("line_entry_mode", "paste")).strip().lower()
+                    if mode in {"paste", "dmf"}:
+                        return mode
+        except Exception:
+            pass
+        return "paste"
+
     def _run_automation(self, data, bulk_paste_mode=True, clipboard_col_defs=None):
         try:
             if automation_module is None:
                 raise ImportError(f"automation module import failed: {AUTOMATION_IMPORT_ERROR}")
             print("--- Automation Started ---")
+            line_entry_mode = self._load_line_entry_mode_default()
             automation_module.test_final8(
                 data,
                 bulk_paste_mode=bulk_paste_mode,
                 clipboard_col_defs=clipboard_col_defs,
+                line_entry_mode=line_entry_mode,
             )
             print("--- Automation Finished ---")
-            if bulk_paste_mode:
+            if bulk_paste_mode or line_entry_mode == "dmf":
                 self.after(
                     0,
                     lambda: messagebox.showinfo(
