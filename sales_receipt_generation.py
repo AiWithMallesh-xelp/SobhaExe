@@ -1482,11 +1482,7 @@ class Application(tk.Tk):
             "date": account_date,
             "value_date": account_date,
             "voucher": str(txn.get("receipt_number", "")).strip(),
-            "company": (
-                automation_module.d365_company_from_config()
-                if automation_module and hasattr(automation_module, "d365_company_from_config")
-                else ""
-            ),
+            "company": "",
             "account": str(txn.get("account_number", "")).strip(),
             "account_name": "",
             "payee_name": "",
@@ -2478,34 +2474,18 @@ class Application(tk.Tk):
         threading.Thread(target=install_task, daemon=True).start()
 
     # ---- Automation thread (kept for integration) ----
-    def _load_line_entry_mode_default(self) -> str:
-        try:
-            config_path = self._resolve_config_path()
-            if config_path.exists():
-                with open(config_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    mode = str(data.get("line_entry_mode", "paste")).strip().lower()
-                    if mode in {"paste", "dmf"}:
-                        return mode
-        except Exception:
-            pass
-        return "paste"
-
     def _run_automation(self, data, bulk_paste_mode=True, clipboard_col_defs=None):
         try:
             if automation_module is None:
                 raise ImportError(f"automation module import failed: {AUTOMATION_IMPORT_ERROR}")
             print("--- Automation Started ---")
-            line_entry_mode = self._load_line_entry_mode_default()
             automation_module.test_final8(
                 data,
                 bulk_paste_mode=bulk_paste_mode,
                 clipboard_col_defs=clipboard_col_defs,
-                line_entry_mode=line_entry_mode,
             )
             print("--- Automation Finished ---")
-            if bulk_paste_mode or line_entry_mode == "dmf":
+            if bulk_paste_mode:
                 self.after(
                     0,
                     lambda: messagebox.showinfo(
