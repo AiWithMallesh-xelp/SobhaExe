@@ -78,7 +78,7 @@ if (!(Test-Path "dist\$APPNAME.exe")) {
 Write-Host "  Build successful: dist\$APPNAME.exe" -ForegroundColor Green
 
 # ── 6. Assemble release/ folder ─────────────────────────────
-Write-Host "[6/6] Assembling release folder..." -ForegroundColor Yellow
+Write-Host "[6/7] Assembling release folder..." -ForegroundColor Yellow
 
 if (Test-Path "release") {
     Remove-Item -Recurse -Force "release"
@@ -108,14 +108,27 @@ if (Test-Path "README_CLIENT.md") {
     Copy-Item ".\README_CLIENT.md" ".\release\README_CLIENT.md" -Force
 }
 
+Write-Host "[7/7] Creating ZIP packages..." -ForegroundColor Yellow
+Compress-Archive -Path ".\release\$APPNAME.exe", ".\release\config.json", ".\release\README_CLIENT.md" `
+    -DestinationPath ".\release\sobha-app-only.zip" -Force
+Compress-Archive -Path ".\release\pw-browsers" `
+    -DestinationPath ".\release\sobha-pw-browsers.zip" -Force
+Compress-Archive -Path ".\release\$APPNAME.exe", ".\release\config.json", ".\release\README_CLIENT.md", ".\release\pw-browsers" `
+    -DestinationPath ".\release\sobha-windows-portable.zip" -Force
+
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "  DONE! Release folder ready:" -ForegroundColor Green
 Write-Host "  $PSScriptRoot\release\" -ForegroundColor White
 Write-Host ""
+Write-Host "  ZIP packages:" -ForegroundColor Yellow
+Write-Host "    release\sobha-windows-portable.zip  (full test package)" -ForegroundColor White
+Write-Host "    release\sobha-app-only.zip" -ForegroundColor White
+Write-Host "    release\sobha-pw-browsers.zip" -ForegroundColor White
+Write-Host ""
 Write-Host "  Contents sent to client:" -ForegroundColor Yellow
 Get-ChildItem ".\release" | Format-Table Name, Length -AutoSize
 Write-Host ""
-Write-Host "  Zip the 'release' folder and send to client." -ForegroundColor Yellow
-Write-Host "  Client: double-click sobha.exe  ✅"          -ForegroundColor Green
+Write-Host "  Send sobha-windows-portable.zip to the client." -ForegroundColor Yellow
+Write-Host "  Client: extract fully, then double-click sobha.exe" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan

@@ -2,9 +2,15 @@ name: Build Windows Portable EXE
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - shobhaexe
+    paths-ignore:
+      - "releases/windows/**"
+      - "releases/windows/.gitattributes"
 
 permissions:
-  contents: write   # needed to create a GitHub Release
+  contents: write
 
 jobs:
   build:
@@ -13,6 +19,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -25,58 +33,87 @@ jobs:
           Set-ExecutionPolicy -Scope Process Bypass -Force
           ./build_windows.ps1
 
-      # ── Artifact upload (quick access from the Actions run page) ──────────
+      - name: Create release ZIP files
+        shell: pwsh
+        run: |
+          $APPNAME = (Select-String -Path build_windows.ps1 -Pattern '\$APPNAME\s*=\s*"(\w+)"').Matches[0].Groups[1].Value
+
+          if (!(Test-Path "release\README_CLIENT.md") -and (Test-Path "README_CLIENT.md")) {
+            Copy-Item README_CLIENT.md release\README_CLIENT.md -Force
+          }
+
+          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md `
+            -DestinationPath release\sobha-app-only.zip -Force
+
+          Compress-Archive -Path release\pw-browsers `
+            -DestinationPath release\sobha-pw-browsers.zip -Force
+
+          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md, release\pw-browsers `
+            -DestinationPath release\sobha-windows-portable.zip -Force
+
+          New-Item -ItemType Directory -Force -Path releases/windows | Out-Null
+          Copy-Item release\sobha-app-only.zip releases/windows\ -Force
+          Copy-Item release\sobha-pw-browsers.zip releases/windows\ -Force
+          Copy-Item release\sobha-windows-portable.zip releases/windows\ -Force
+
+          @"
+          {
+            "run_number": ${{ github.run_number }},
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "built_at_utc": "$(Get-Date -Format o)"
+          }
+          "@ | Set-Content releases/windows/build-info.json -Encoding utf8
+
       - name: Upload release folder as artifact
         uses: actions/upload-artifact@v4
         with:
           name: sobha-release
           path: release/**
-          retention-days: 14
+          retention-days: 30
 
-      # ── Zip the exe + config + README separately (small, always works) ────
-      - name: Zip exe + config (small download)
-        shell: pwsh
+      - name: Upload portable ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sobha-windows-portable
+          path: releases/windows/sobha-windows-portable.zip
+          retention-days: 30
+
+      - name: Commit release ZIPs to repo
+        shell: bash
         run: |
-          # Get the exe name from build script to avoid hardcoding
-          $APPNAME = (Select-String -Path build_windows.ps1 -Pattern '\$APPNAME\s*=\s*"(\w+)"').Matches[0].Groups[1].Value
-          Write-Host "Zipping: release\$APPNAME.exe"
-          # Ensure README is in release/ (build script copies it if present)
-          if (!(Test-Path "release\README_CLIENT.md") -and (Test-Path "README_CLIENT.md")) {
-            Copy-Item README_CLIENT.md release\README_CLIENT.md -Force
-          }
-          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md `
-            -DestinationPath release\sobha-app-only.zip -Force
+          git lfs install
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/windows/
+          if git diff --staged --quiet; then
+            echo "No release file changes to commit."
+            exit 0
+          fi
+          git commit -m "ci: update Windows portable build zips (run ${{ github.run_number }})"
+          git push
 
-      # ── Zip pw-browsers separately (large, optional) ─────────────────────
-      - name: Zip pw-browsers separately
-        shell: pwsh
-        run: |
-          Compress-Archive -Path release\pw-browsers `
-            -DestinationPath release\sobha-pw-browsers.zip -Force
-
-      # ── Create a GitHub Release with all files as direct download links ──
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "Sobha Build ${{ github.run_number }}"
+          tag_name: windows-build-${{ github.run_number }}
+          name: "Sobha Windows Build ${{ github.run_number }}"
           body: |
-            ## Download Instructions
+            ## Windows test package
 
-            ### Option A – All-in-one (may be large ~300MB)
-            Download via GitHub CLI on Linux:
-            ```
-            gh run download ${{ github.run_id }} --repo ${{ github.repository }} -n sobha-release -D ./sobha-release
-            ```
+            ### Recommended
+            Download **sobha-windows-portable.zip** — contains everything needed to test on Windows.
 
-            ### Option B – Split downloads (recommended on slow connections)
-            1. Download **sobha-app-only.zip** (small) → contains `sobha.exe`, `config.json`, `README_CLIENT.md`
-            2. Download **sobha-pw-browsers.zip** (large ~250MB) → contains `pw-browsers/`
-            3. Extract both into the **same folder**
+            ### Split downloads
+            1. **sobha-app-only.zip** — exe + config + readme
+            2. **sobha-pw-browsers.zip** — Playwright Chromium browsers
+            3. Extract both into the same folder if using split downloads
 
-            Client runs: double-click `sobha.exe` ✅
+            Built from branch `${{ github.ref_name }}` at `${{ github.sha }}`.
           files: |
-            release/sobha-app-only.zip
-            release/sobha-pw-browsers.zip
+            releases/windows/sobha-windows-portable.zip
+            releases/windows/sobha-app-only.zip
+            releases/windows/sobha-pw-browsers.zip
           draft: false
           prerelease: false
