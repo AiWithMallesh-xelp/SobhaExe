@@ -89,6 +89,13 @@ New-Item -ItemType Directory -Path "release" | Out-Null
 Copy-Item ".\dist\$APPNAME.exe"  ".\release\$APPNAME.exe"  -Force
 Copy-Item ".\config.json"        ".\release\config.json"    -Force
 
+if (Test-Path "sobha_logo_brand.png") {
+    Copy-Item ".\sobha_logo_brand.png" ".\release\sobha_logo_brand.png" -Force
+    Write-Host "  sobha_logo_brand.png included." -ForegroundColor DarkCyan
+} else {
+    Write-Host "WARNING: sobha_logo_brand.png not found – app header logo will be missing." -ForegroundColor DarkYellow
+}
+
 # Optional: pre-bundled auth session (client starts logged in)
 if (Test-Path "auth.json") {
     Copy-Item ".\auth.json" ".\release\auth.json" -Force
@@ -109,11 +116,34 @@ if (Test-Path "README_CLIENT.md") {
 }
 
 Write-Host "[7/7] Creating ZIP packages..." -ForegroundColor Yellow
-Compress-Archive -Path ".\release\$APPNAME.exe", ".\release\config.json", ".\release\README_CLIENT.md" `
-    -DestinationPath ".\release\sobha-app-only.zip" -Force
+$zipItems = @(
+    ".\release\$APPNAME.exe",
+    ".\release\config.json",
+    ".\release\README_CLIENT.md"
+)
+if (Test-Path ".\release\sobha_logo_brand.png") {
+    $zipItems += ".\release\sobha_logo_brand.png"
+}
+$portableItems = @(
+    ".\release\$APPNAME.exe",
+    ".\release\config.json",
+    ".\release\README_CLIENT.md",
+    ".\release\pw-browsers"
+)
+if (Test-Path ".\release\sobha_logo_brand.png") {
+    $portableItems = @(
+        ".\release\$APPNAME.exe",
+        ".\release\config.json",
+        ".\release\README_CLIENT.md",
+        ".\release\sobha_logo_brand.png",
+        ".\release\pw-browsers"
+    )
+}
+
+Compress-Archive -Path $zipItems -DestinationPath ".\release\sobha-app-only.zip" -Force
 Compress-Archive -Path ".\release\pw-browsers" `
     -DestinationPath ".\release\sobha-pw-browsers.zip" -Force
-Compress-Archive -Path ".\release\$APPNAME.exe", ".\release\config.json", ".\release\README_CLIENT.md", ".\release\pw-browsers" `
+Compress-Archive -Path $portableItems `
     -DestinationPath ".\release\sobha-windows-portable.zip" -Force
 
 Write-Host ""

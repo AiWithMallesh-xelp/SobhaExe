@@ -28,6 +28,7 @@ Keep all of these in the **same folder** at all times:
 |---|---|---|
 | `sobha.exe` | ✅ Yes | The application |
 | `config.json` | ✅ Yes | App configuration (D365 URL, journal name, etc.) |
+| `sobha_logo_brand.png` | ✅ Yes | Header logo shown in the app |
 | `pw-browsers/` | ✅ Yes | Browser engine — **do not delete or rename** |
 | `auth.json` | Created after first login | Stores your login session |
 

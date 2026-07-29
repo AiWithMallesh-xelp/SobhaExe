@@ -42,13 +42,38 @@ jobs:
             Copy-Item README_CLIENT.md release\README_CLIENT.md -Force
           }
 
-          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md `
+          $appZipItems = @(
+            "release\$APPNAME.exe",
+            "release\config.json",
+            "release\README_CLIENT.md"
+          )
+          if (Test-Path "release\sobha_logo_brand.png") {
+            $appZipItems += "release\sobha_logo_brand.png"
+          }
+
+          $portableZipItems = @(
+            "release\$APPNAME.exe",
+            "release\config.json",
+            "release\README_CLIENT.md",
+            "release\pw-browsers"
+          )
+          if (Test-Path "release\sobha_logo_brand.png") {
+            $portableZipItems = @(
+              "release\$APPNAME.exe",
+              "release\config.json",
+              "release\README_CLIENT.md",
+              "release\sobha_logo_brand.png",
+              "release\pw-browsers"
+            )
+          }
+
+          Compress-Archive -Path $appZipItems `
             -DestinationPath release\sobha-app-only.zip -Force
 
           Compress-Archive -Path release\pw-browsers `
             -DestinationPath release\sobha-pw-browsers.zip -Force
 
-          Compress-Archive -Path "release\$APPNAME.exe", release\config.json, release\README_CLIENT.md, release\pw-browsers `
+          Compress-Archive -Path $portableZipItems `
             -DestinationPath release\sobha-windows-portable.zip -Force
 
           New-Item -ItemType Directory -Force -Path releases/windows | Out-Null
