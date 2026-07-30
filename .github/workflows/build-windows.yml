@@ -47,7 +47,7 @@ jobs:
             -OutputMsi "$PWD\release\sobha-setup.msi"
 
       - name: Publish release artifacts to releases/windows
-        if: success() || failure()
+        if: always()
         shell: pwsh
         run: |
           if (!(Test-Path "release\sobha-windows-portable.zip")) {
@@ -91,7 +91,7 @@ jobs:
           "@ | Set-Content releases/windows/build-info.json -Encoding utf8
 
       - name: Upload release folder as artifact
-        if: success() || failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sobha-release
@@ -99,6 +99,7 @@ jobs:
           retention-days: 30
 
       - name: Upload portable ZIP artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sobha-windows-portable
@@ -106,7 +107,7 @@ jobs:
           retention-days: 30
 
       - name: Upload MSI artifact
-        if: success() || failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sobha-setup-msi
@@ -115,6 +116,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit release artifacts to repo
+        if: always()
         shell: bash
         run: |
           git lfs install
