@@ -47,31 +47,51 @@ jobs:
             -OutputMsi "$PWD\release\sobha-setup.msi"
 
       - name: Publish release artifacts to releases/windows
+        if: success() || failure()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path releases/windows | Out-Null
-          Copy-Item release\sobha-windows-portable.zip releases/windows\ -Force
-          Copy-Item release\sobha-app-only.zip releases/windows\ -Force
-          Copy-Item release\sobha-pw-browsers.zip releases/windows\ -Force
-          Copy-Item release\sobha-setup.msi releases/windows\ -Force
+          if (!(Test-Path "release\sobha-windows-portable.zip")) {
+            Write-Error "Portable ZIP was not created."
+          }
 
-          $msi = Get-Item release\sobha-setup.msi
+          New-Item -ItemType Directory -Force -Path releases/windows | Out-Null
+          Copy-Item release\sobha-windows-portable.zip releases/windows/ -Force
+          Copy-Item release\sobha-app-only.zip releases/windows/ -Force
+          Copy-Item release\sobha-pw-browsers.zip releases/windows/ -Force
+
           $portable = Get-Item release\sobha-windows-portable.zip
+          $msiInfo = ""
+          if (Test-Path "release\sobha-setup.msi") {
+            Copy-Item release\sobha-setup.msi releases/windows/ -Force
+            $msi = Get-Item release\sobha-setup.msi
+            $msiInfo = @"
+
+            "msi_file": "sobha-setup.msi",
+            "msi_size_bytes": $($msi.Length),
+"@
+          } else {
+            $msiInfo = @"
+
+            "msi_file": null,
+            "msi_size_bytes": 0,
+            "msi_build_failed": true,
+"@
+          }
+
           @"
           {
             "run_number": ${{ github.run_number }},
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
             "branch": "${{ github.ref_name }}",
-            "built_at_utc": "$(Get-Date -Format o)",
-            "msi_file": "sobha-setup.msi",
-            "msi_size_bytes": $($msi.Length),
+            "built_at_utc": "$(Get-Date -Format o)",$msiInfo
             "portable_zip_file": "sobha-windows-portable.zip",
             "portable_zip_size_bytes": $($portable.Length)
           }
           "@ | Set-Content releases/windows/build-info.json -Encoding utf8
 
       - name: Upload release folder as artifact
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: sobha-release
@@ -86,11 +106,13 @@ jobs:
           retention-days: 30
 
       - name: Upload MSI artifact
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: sobha-setup-msi
           path: releases/windows/sobha-setup.msi
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Commit release artifacts to repo
         shell: bash
@@ -107,6 +129,7 @@ jobs:
           git push
 
       - name: Create GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-build-${{ github.run_number }}

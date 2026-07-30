@@ -667,6 +667,126 @@ class ClipboardColumnSettingsDialog(tk.Toplevel):
 
 
 # ---------------------------------------------------------------------------
+# Settings Dialog
+# ---------------------------------------------------------------------------
+class SettingsDialog(tk.Toplevel):
+    def __init__(self, parent, on_logout=None, on_open_clipboard_settings=None):
+        super().__init__(parent)
+        self.title("Settings")
+        self.geometry("480x320")
+        self.minsize(420, 280)
+        self.configure(bg="white")
+        self.on_logout = on_logout
+        self.on_open_clipboard_settings = on_open_clipboard_settings
+        self._colors = getattr(parent, "colors", {})
+
+        self.transient(parent)
+        self.grab_set()
+
+        main = tk.Frame(self, bg="white", padx=20, pady=16)
+        main.pack(fill="both", expand=True)
+
+        tk.Label(
+            main,
+            text="Settings",
+            bg="white",
+            fg=self._colors.get("title", text_color),
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w")
+
+        account_frame = tk.Frame(main, bg="white")
+        account_frame.pack(fill="x", pady=(16, 0))
+        tk.Label(
+            account_frame,
+            text="Account",
+            bg="white",
+            fg=self._colors.get("secondary_text", "#777676"),
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="w")
+
+        if getattr(parent, "_d365_session_valid", False):
+            display_name = str(getattr(parent, "_login_display_name", "") or "").strip()
+            status_text = f"Signed in as {display_name}" if display_name else "Signed in to D365"
+        else:
+            status_text = "Not logged in"
+
+        tk.Label(
+            account_frame,
+            text=status_text,
+            bg="white",
+            fg=self._colors.get("text", text_color),
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(4, 8))
+
+        _make_button(
+            account_frame,
+            text="Logout",
+            command=self._handle_logout,
+            bg="#DC2626",
+            fg="white",
+            activebackground="#B91C1C",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        ).pack(anchor="w")
+
+        clipboard_frame = tk.Frame(main, bg="white")
+        clipboard_frame.pack(fill="x", pady=(24, 0))
+        tk.Label(
+            clipboard_frame,
+            text="Clipboard",
+            bg="white",
+            fg=self._colors.get("secondary_text", "#777676"),
+            font=("Segoe UI", 8, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            clipboard_frame,
+            text="Configure columns copied to Excel clipboard.",
+            bg="white",
+            fg=self._colors.get("muted", "#6b7280"),
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(4, 8))
+
+        _make_button(
+            clipboard_frame,
+            text="Copy Column Settings",
+            command=self._handle_open_clipboard_settings,
+            bg="#eef2ff",
+            fg="#1d4ed8",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        ).pack(anchor="w")
+
+        btn_row = tk.Frame(main, bg="white")
+        btn_row.pack(side="bottom", fill="x", pady=(20, 0))
+        _make_button(
+            btn_row,
+            text="Close",
+            command=self.destroy,
+            bg="#f3f4f6",
+            fg=text_color,
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        ).pack(side="right")
+
+    def _handle_logout(self):
+        if callable(self.on_logout) and self.on_logout():
+            self.destroy()
+
+    def _handle_open_clipboard_settings(self):
+        if callable(self.on_open_clipboard_settings):
+            self.on_open_clipboard_settings()
+
+
+# ---------------------------------------------------------------------------
 # Sales Acc Receipt Gen Dialog
 # ---------------------------------------------------------------------------
 class SalesAccReceiptGenDialog(tk.Toplevel):
@@ -946,11 +1066,11 @@ class Application(tk.Tk):
 
         # Initialize variables
         self.selected_batch_var = tk.StringVar(value="")
-        self.match_filter_var = tk.StringVar(value="ALL")
         self.all_rows = []
         self.batch_groups = []
         self.current_batch_count = 0
         self.current_sub_batch_count = 0
+        self._d365_session_valid = False
 
         # Initialize widgets to None to avoid AttributeErrors
         self.cards_frame: Optional[tk.Frame] = None
@@ -959,7 +1079,13 @@ class Application(tk.Tk):
         self.row_count_label: Optional[tk.Label] = None
         self.section_count_label: Optional[tk.Label] = None
         self.status_bar: Optional[tk.Label] = None
-        self.login_button: Optional[tk.Button] = None
+        self.welcome_login_button: Optional[tk.Button] = None
+        self.session_status_label: Optional[tk.Label] = None
+        self.header_bar: Optional[tk.Frame] = None
+        self.header_actions: Optional[tk.Frame] = None
+        self.welcome_view: Optional[tk.Frame] = None
+        self.app_view: Optional[tk.Frame] = None
+        self.root_frame: Optional[tk.Frame] = None
         self._auth_probe_serial = 0
         self._session_anim_serial = 0
         self._login_display_name: Optional[str] = None
@@ -1007,25 +1133,26 @@ class Application(tk.Tk):
             pass
 
         # Main Root Frame
-        root_frame = tk.Frame(self, bg=self.colors["page_bg"])
-        root_frame.pack(fill="both", expand=True)
+        self.root_frame = tk.Frame(self, bg=self.colors["page_bg"])
+        self.root_frame.pack(fill="both", expand=True)
 
         # ===================================================================
-        # 1. TOP HEADER BAR (#5E5453) - Clean Brand & Functional Toolbar
+        # 1. TOP HEADER BAR (#5E5453) - shown only after login
         # ===================================================================
-        header_bar = tk.Frame(root_frame, bg=self.colors["primary_bg"], padx=18, pady=10)
-        header_bar.pack(fill="x")
-
-        # Brand Title Left
-        brand_left = tk.Frame(header_bar, bg=self.colors["primary_bg"])
-        brand_left.pack(side="left")
-
         try:
             self.sobha_brand_img = tk.PhotoImage(file=p("sobha_logo_brand.png"))
+        except Exception:
+            self.sobha_brand_img = None
+
+        self.header_bar = tk.Frame(self.root_frame, bg=self.colors["primary_bg"], padx=18, pady=10)
+
+        # Brand Title Left
+        brand_left = tk.Frame(self.header_bar, bg=self.colors["primary_bg"])
+        brand_left.pack(side="left")
+
+        if self.sobha_brand_img is not None:
             logo_lbl = tk.Label(brand_left, image=self.sobha_brand_img, bg=self.colors["primary_bg"])
             logo_lbl.pack(side="left", padx=(0, 10))
-        except Exception:
-            pass
 
         brand_text_wrap = tk.Frame(brand_left, bg=self.colors["primary_bg"])
         brand_text_wrap.pack(side="left")
@@ -1048,12 +1175,11 @@ class Application(tk.Tk):
             anchor="w",
         ).pack(anchor="w")
 
-        # Functional Toolbar Actions Right
-        header_actions = tk.Frame(header_bar, bg=self.colors["primary_bg"])
-        header_actions.pack(side="right")
+        # Functional Toolbar Actions Right (shown only when logged in)
+        self.header_actions = tk.Frame(self.header_bar, bg=self.colors["primary_bg"])
 
         _make_button(
-            header_actions,
+            self.header_actions,
             text="Make Automation",
             command=self._submit_selection,
             relief="flat",
@@ -1067,7 +1193,7 @@ class Application(tk.Tk):
         ).pack(side="right", padx=(8, 0))
 
         export_btn = _make_button(
-            header_actions,
+            self.header_actions,
             text="📥",
             command=self._export_to_excel,
             relief="flat",
@@ -1083,9 +1209,9 @@ class Application(tk.Tk):
         self._bind_copy_button_tooltip(export_btn, "Export to Excel (.xlsx)")
 
         refresh_btn = _make_button(
-            header_actions,
+            self.header_actions,
             text="🔄",
-            command=self._load_transactions,
+            command=self._refresh_transactions,
             cursor="hand2",
             relief="flat",
             bg="#0D9488",
@@ -1098,25 +1224,21 @@ class Application(tk.Tk):
         refresh_btn.pack(side="right", padx=(8, 0))
         self._bind_copy_button_tooltip(refresh_btn, "Refresh transactions")
 
-        self.login_button = _make_button(
-            header_actions,
-            text="Login",
-            command=self._run_login_automation,
-            cursor="hand2",
-            relief="flat",
-            bg=self.colors["success"],
+        self.session_status_label = tk.Label(
+            self.header_actions,
+            text="Logged In",
+            bg=self.colors["accent"],
             fg="white",
-            activebackground="#15803D",
             font=("Segoe UI", 9, "bold"),
             padx=14,
             pady=6,
         )
-        self.login_button.pack(side="right", padx=(8, 0))
+        self.session_status_label.pack(side="right", padx=(8, 0))
 
         _make_button(
-            header_actions,
+            self.header_actions,
             text="⚙ Settings",
-            command=self._open_clipboard_column_settings,
+            command=self._open_settings,
             cursor="hand2",
             relief="flat",
             bg=self.colors["pill_bg"],
@@ -1127,10 +1249,12 @@ class Application(tk.Tk):
             pady=6,
         ).pack(side="right", padx=(8, 0))
 
-        # ===================================================================
-        # 2. CONTROLS & FILTER CARD (#F4F4F4)
-        # ===================================================================
-        body_content = tk.Frame(root_frame, bg=self.colors["page_bg"], padx=18, pady=14)
+        # Logged-out welcome screen
+        self.welcome_view = self._build_welcome_view(self.root_frame)
+
+        # Logged-in workspace
+        self.app_view = tk.Frame(self.root_frame, bg=self.colors["page_bg"])
+        body_content = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=18, pady=14)
         body_content.pack(fill="both", expand=True)
 
         filter_card = tk.Frame(
@@ -1251,7 +1375,7 @@ class Application(tk.Tk):
         self.bind_all("<Button-5>", self._on_cards_mousewheel)
 
         # Footer Status Bar
-        footer = tk.Frame(root_frame, bg=self.colors["page_bg"], padx=18, pady=8)
+        footer = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=18, pady=8)
         footer.pack(fill="x")
 
         self.section_count_label = tk.Label(
@@ -1274,49 +1398,262 @@ class Application(tk.Tk):
 
         self.status_bar = tk.Label(
             footer,
-            text="Ready",
+            text="Login required",
             fg=self.colors["muted"],
             bg=self.colors["page_bg"],
             font=("Segoe UI", 9),
         )
         self.status_bar.pack(side="right")
-        self.row_count_label.pack(side="left")
-
-        self.status_bar = tk.Label(
-            footer,
-            text="Ready",
-            fg=self.colors["muted"],
-            bg=self.colors["page_bg"],
-            font=("Segoe UI", 9),
-        )
-        self.status_bar.pack(side="right")
-        self.status_bar.pack(side="left", padx=(10, 0))
 
         self._browser_check_prompted = False
-        self._set_login_button_state(False)
+        self._update_auth_ui_mode()
         self.after(250, self._refresh_login_button_async)
         self.after(600, self._check_browser_ready_on_launch)
-        self.after(200, self._load_transactions)
 
-    def _set_login_button_state(self, valid: bool, display_name: Optional[str] = None):
-        if self.login_button is None:
+    def _build_welcome_view(self, parent: tk.Frame) -> tk.Frame:
+        welcome = tk.Frame(parent, bg=self.colors["page_bg"])
+        welcome.grid_rowconfigure(0, weight=1)
+        welcome.grid_columnconfigure(0, weight=1, uniform="welcome_cols")
+        welcome.grid_columnconfigure(1, weight=1, uniform="welcome_cols")
+
+        # Left column — product banner (content centered)
+        banner_col = tk.Frame(welcome, bg=self.colors["primary_bg"])
+        banner_col.grid(row=0, column=0, sticky="nsew")
+        banner_col.grid_rowconfigure(0, weight=1)
+        banner_col.grid_rowconfigure(1, weight=0)
+        banner_col.grid_rowconfigure(2, weight=1)
+        banner_col.grid_columnconfigure(0, weight=1)
+
+        banner_hwrap = tk.Frame(banner_col, bg=self.colors["primary_bg"])
+        banner_hwrap.grid(row=1, column=0, sticky="ew")
+        banner_hwrap.grid_columnconfigure(0, weight=1)
+        banner_hwrap.grid_columnconfigure(1, weight=0)
+        banner_hwrap.grid_columnconfigure(2, weight=1)
+
+        banner_center = tk.Frame(banner_hwrap, bg=self.colors["primary_bg"])
+        banner_center.grid(row=0, column=1)
+        banner_center.grid_columnconfigure(0, weight=1)
+
+        banner_inner = tk.Frame(banner_center, bg=self.colors["primary_bg"], padx=56, pady=8)
+        banner_inner.pack(anchor="center")
+
+        brand_row = tk.Frame(banner_inner, bg=self.colors["primary_bg"])
+        brand_row.pack(anchor="center", pady=(0, 28))
+
+        if self.sobha_brand_img is not None:
+            tk.Label(
+                brand_row,
+                image=self.sobha_brand_img,
+                bg=self.colors["primary_bg"],
+            ).pack(side="left", padx=(0, 18))
+
+        title_col = tk.Frame(brand_row, bg=self.colors["primary_bg"])
+        title_col.pack(side="left")
+        tk.Label(
+            title_col,
+            text="Sobha Reconciliation",
+            bg=self.colors["primary_bg"],
+            fg=self.colors["white"],
+            font=("Segoe UI", 24, "bold"),
+            anchor="w",
+        ).pack(anchor="w")
+        tk.Label(
+            title_col,
+            text="Sales Acc Receipt Gen",
+            bg=self.colors["primary_bg"],
+            fg="#C8CDD4",
+            font=("Segoe UI", 11),
+            anchor="w",
+        ).pack(anchor="w", pady=(6, 0))
+
+        tk.Label(
+            banner_inner,
+            text="CUSTOMER RECEIPT OPERATIONS",
+            bg=self.colors["primary_bg"],
+            fg="#A8ADB4",
+            font=("Segoe UI", 8, "bold"),
+            anchor="center",
+        ).pack(anchor="center", pady=(0, 14))
+
+        tk.Label(
+            banner_inner,
+            text=(
+                "A dedicated workspace for finance teams to review pre-posted "
+                "receipt batches and publish accurate customer payment journals to D365."
+            ),
+            bg=self.colors["primary_bg"],
+            fg="#F3F1F0",
+            font=("Segoe UI", 13),
+            anchor="center",
+            justify="center",
+            wraplength=440,
+        ).pack(anchor="center", pady=(0, 28))
+
+        tk.Frame(banner_inner, bg="#8A817F", height=1).pack(fill="x", pady=(0, 24))
+
+        tk.Label(
+            banner_inner,
+            text="Platform capabilities",
+            bg=self.colors["primary_bg"],
+            fg="#C8CDD4",
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, 12))
+
+        for line in (
+            "Sync pre-posted payment batches from Sobha DocuXray in real time",
+            "Validate transactions with search, filters, and batch controls",
+            "Generate D365 customer receipt journals with guided automation",
+            "Protect access with Microsoft sign-in and local session storage",
+        ):
+            item_row = tk.Frame(banner_inner, bg=self.colors["primary_bg"])
+            item_row.pack(anchor="w", fill="x", pady=5)
+            tk.Label(
+                item_row,
+                text="✓",
+                bg=self.colors["primary_bg"],
+                fg="#7DD3A8",
+                font=("Segoe UI", 11, "bold"),
+                width=2,
+                anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                item_row,
+                text=line,
+                bg=self.colors["primary_bg"],
+                fg="#D2D5DB",
+                font=("Segoe UI", 10),
+                anchor="w",
+                justify="left",
+                wraplength=400,
+            ).pack(side="left", fill="x", expand=True)
+
+        # Right column — login panel
+        login_col = tk.Frame(welcome, bg=self.colors["page_bg"])
+        login_col.grid(row=0, column=1, sticky="nsew")
+        login_col.grid_rowconfigure(0, weight=1)
+        login_col.grid_rowconfigure(1, weight=0)
+        login_col.grid_rowconfigure(2, weight=1)
+        login_col.grid_columnconfigure(0, weight=1)
+
+        login_row = tk.Frame(login_col, bg=self.colors["page_bg"])
+        login_row.grid(row=1, column=0, sticky="ew")
+        login_row.grid_columnconfigure(0, weight=1)
+        login_row.grid_columnconfigure(1, weight=0)
+        login_row.grid_columnconfigure(2, weight=1)
+
+        login_panel_bg = self.colors["page_bg"]
+        login_heading_fg = self.colors["dark_text"]
+        login_body_fg = "#4F4D4D"
+        login_hint_fg = "#5E5453"
+
+        login_card = tk.Frame(
+            login_row,
+            bg=login_panel_bg,
+            padx=52,
+            pady=44,
+        )
+        login_card.grid(row=0, column=1)
+
+        tk.Label(
+            login_card,
+            text="Welcome",
+            bg=login_panel_bg,
+            fg=login_heading_fg,
+            font=("Segoe UI", 28, "bold"),
+        ).pack()
+        tk.Label(
+            login_card,
+            text="Sign in with your Microsoft D365 account to access receipt batches and automation tools.",
+            bg=login_panel_bg,
+            fg=login_body_fg,
+            font=("Segoe UI", 12),
+            wraplength=380,
+            justify="center",
+        ).pack(pady=(12, 32))
+
+        self.welcome_login_button = _make_button(
+            login_card,
+            text="Login to D365",
+            command=self._run_login_automation,
+            cursor="hand2",
+            relief="flat",
+            bg=self.colors["success"],
+            fg="white",
+            activebackground="#15803D",
+            font=("Segoe UI", 12, "bold"),
+            padx=32,
+            pady=10,
+        )
+        self.welcome_login_button.pack()
+        tk.Label(
+            login_card,
+            text="You will be redirected to Microsoft sign-in in your browser.",
+            bg=login_panel_bg,
+            fg=login_hint_fg,
+            font=("Segoe UI", 10),
+        ).pack(pady=(16, 0))
+
+        return welcome
+
+    def _update_auth_ui_mode(self):
+        if not self.root_frame:
             return
-
-        normalized_name = str(display_name or "").strip() or None
-        self._login_display_name = normalized_name if valid else None
-        if valid and normalized_name and len(normalized_name) > 22:
-            button_text = f"{normalized_name[:19]}..."
+        if self._d365_session_valid:
+            if self.welcome_view:
+                self.welcome_view.pack_forget()
+            if self.header_bar:
+                self.header_bar.pack(fill="x")
+            if self.header_actions:
+                self.header_actions.pack(side="right")
+            if self.app_view:
+                self.app_view.pack(fill="both", expand=True)
+            self._set_session_status_display(True, self._login_display_name)
         else:
-            button_text = (normalized_name or "Logged In") if valid else "Login"
-        button_bg = self.colors["accent"] if valid else self.colors["success"]
-        active_bg = "#264fdf" if valid else "#14913f"
-        self.login_button.config(
+            if self.app_view:
+                self.app_view.pack_forget()
+            if self.header_actions:
+                self.header_actions.pack_forget()
+            if self.header_bar:
+                self.header_bar.pack_forget()
+            if self.welcome_view:
+                self.welcome_view.pack(fill="both", expand=True)
+            self._set_welcome_login_display(False)
+
+    def _set_welcome_login_display(self, valid: bool, display_name: Optional[str] = None):
+        if self.welcome_login_button is None:
+            return
+        if valid:
+            self.welcome_login_button.pack_forget()
+            return
+        self.welcome_login_button.config(
             state="normal",
             cursor="hand2",
-            text=button_text,
-            bg=button_bg,
-            activebackground=active_bg,
+            text="Login to D365",
+            bg=self.colors["success"],
+            activebackground="#15803D",
         )
+        if not self.welcome_login_button.winfo_ismapped():
+            self.welcome_login_button.pack()
+
+    def _set_session_status_display(self, valid: bool, display_name: Optional[str] = None):
+        if self.session_status_label is None:
+            return
+        normalized_name = str(display_name or "").strip() or None
+        if valid and normalized_name and len(normalized_name) > 22:
+            status_text = f"{normalized_name[:19]}..."
+        else:
+            status_text = (normalized_name or "Logged In") if valid else ""
+        self.session_status_label.config(
+            text=status_text,
+            bg=self.colors["accent"] if valid else self.colors["pill_bg"],
+            fg="white" if valid else self.colors["dark_text"],
+        )
+
+    def _set_login_button_state(self, valid: bool, display_name: Optional[str] = None):
+        normalized_name = str(display_name or "").strip() or None
+        self._login_display_name = normalized_name if valid else None
+        self._update_auth_ui_mode()
 
     def _apply_auth_result(self, auth_result: Optional[dict], *, invalidate_pending: bool = False):
         if invalidate_pending:
@@ -1326,7 +1663,13 @@ class Application(tk.Tk):
         display_name = None
         if valid and isinstance(auth_result, dict):
             display_name = str(auth_result.get("display_name") or "").strip() or None
+        was_valid = self._d365_session_valid
+        self._d365_session_valid = valid
         self._set_login_button_state(valid, display_name)
+        if valid:
+            self._load_transactions_if_authenticated()
+        elif was_valid or self.batch_groups:
+            self._clear_transaction_data()
 
     def _apply_auth_probe_result(self, probe_id: int, auth_result: Optional[dict]):
         if probe_id != self._auth_probe_serial:
@@ -1335,6 +1678,7 @@ class Application(tk.Tk):
 
     def _refresh_login_button_async(self):
         if automation_module is None or not hasattr(automation_module, "probe_saved_session"):
+            self._d365_session_valid = False
             self._set_login_button_state(False)
             return
 
@@ -1345,20 +1689,25 @@ class Application(tk.Tk):
 
         self._is_checking_session = True
         self._session_check_step = 3
-        if self.login_button:
-            self.login_button.config(state="disabled", bg="#6c757d", cursor="watch", text="Checking session...")
+        if self.welcome_login_button:
+            self.welcome_login_button.config(
+                state="disabled",
+                bg="#6c757d",
+                cursor="watch",
+                text="Checking session...",
+            )
 
         def update_button_animation():
             if anim_id != self._session_anim_serial or not getattr(self, "_is_checking_session", False):
                 return
-            if not self.login_button:
+            if not self.welcome_login_button:
                 return
             if self._session_check_step > 0:
-                self.login_button.config(text=f"Session checking {self._session_check_step}")
+                self.welcome_login_button.config(text=f"Session checking {self._session_check_step}")
                 self._session_check_step -= 1
                 self.after(1000, update_button_animation)
             else:
-                self.login_button.config(text="Opening...")
+                self.welcome_login_button.config(text="Opening...")
 
         update_button_animation()
 
@@ -1372,8 +1721,6 @@ class Application(tk.Tk):
             def on_complete():
                 self._session_anim_serial += 1
                 self._is_checking_session = False
-                if self.login_button:
-                    self.login_button.config(state="normal", cursor="hand2")
                 self._apply_auth_probe_result(probe_id, auth_result)
 
             self.after(0, on_complete)
@@ -1436,6 +1783,108 @@ class Application(tk.Tk):
             "payment_reference",
         )
         return all(str(row.get(key, "")).strip() for key in required)
+
+    def _row_is_posted(self, row: dict) -> bool:
+        return bool(str(row.get("voucher", "")).strip())
+
+    def _row_matches_search(self, row: dict, query: str) -> bool:
+        normalized_query = str(query or "").strip().casefold()
+        if not normalized_query:
+            return True
+        search_keys = [key for key, _ in DISPLAY_COL_DEFS]
+        search_keys.extend(["batch_id", "sub_batch_id", "voucher", "uuid"])
+        for key in search_keys:
+            if normalized_query in str(row.get(key, "")).casefold():
+                return True
+        return False
+
+    def _row_matches_status(self, row: dict, status: str) -> bool:
+        normalized_status = str(status or "All").strip()
+        if normalized_status == "All":
+            return True
+        if normalized_status == "Posted":
+            return self._row_is_posted(row)
+        if normalized_status == "Matched":
+            return self._row_is_matched(row)
+        if normalized_status == "Unmatched":
+            return not self._row_is_posted(row) and not self._row_is_matched(row)
+        return True
+
+    def _sub_batch_splits_completed(self, sub_batch: dict) -> bool:
+        transactions = sub_batch.get("transactions", [])
+        if not transactions:
+            return False
+        return all(self._row_is_posted(txn) for txn in transactions)
+
+    def _filter_batch_groups(self, batch_groups):
+        status = self.match_filter_var.get().strip()
+        query = self.search_var.get() if hasattr(self, "search_var") else ""
+        filtered = []
+        for batch in batch_groups:
+            batch_id = batch.get("batch_id")
+            filtered_sub_batches = []
+            for sub_batch in batch.get("sub_batches", []):
+                if status == "All Splits Completed":
+                    if not self._sub_batch_splits_completed(sub_batch):
+                        continue
+                    transactions = [
+                        txn
+                        for txn in sub_batch.get("transactions", [])
+                        if self._row_matches_search(txn, query)
+                    ]
+                else:
+                    transactions = [
+                        txn
+                        for txn in sub_batch.get("transactions", [])
+                        if self._row_matches_status(txn, status)
+                        and self._row_matches_search(txn, query)
+                    ]
+                if transactions:
+                    filtered_sub_batches.append(
+                        {
+                            "batch_id": sub_batch.get("batch_id", batch_id),
+                            "sub_batch_id": sub_batch.get("sub_batch_id"),
+                            "transactions": transactions,
+                        }
+                    )
+            if filtered_sub_batches:
+                filtered.append(
+                    {
+                        "batch_id": batch_id,
+                        "sub_batches": filtered_sub_batches,
+                    }
+                )
+        return filtered
+
+    def _clear_transaction_data(self):
+        self.batch_groups = []
+        self.all_rows = []
+        self.selected_batch_var.set("")
+        self.current_batch_count = 0
+        self.current_sub_batch_count = 0
+        if self.cards_frame:
+            for widget in self.cards_frame.winfo_children():
+                widget.destroy()
+        self.row_vars.clear()
+        if self.row_count_label:
+            self.row_count_label.config(text="0 batches | 0 sub-batches")
+        self._refresh_match_counts([])
+        if self.status_bar:
+            self.status_bar.config(text="Login required")
+
+    def _load_transactions_if_authenticated(self):
+        if not self._d365_session_valid:
+            return
+        self._load_transactions()
+
+    def _refresh_transactions(self):
+        if not self._d365_session_valid:
+            messagebox.showinfo(
+                "Login Required",
+                "Please login to D365 to view and refresh transaction batches.",
+            )
+            return
+        self._load_transactions()
 
     def _row_key(self, row: dict) -> str:
         uuid = str(row.get("uuid", "")).strip()
@@ -1622,6 +2071,39 @@ class Application(tk.Tk):
         dlg = ClipboardColumnSettingsDialog(self, self.clipboard_col_defs, on_save=on_save)
         self.wait_window(dlg)
 
+    def _open_settings(self):
+        dlg = SettingsDialog(
+            self,
+            on_logout=self._logout,
+            on_open_clipboard_settings=self._open_clipboard_column_settings,
+        )
+        self.wait_window(dlg)
+
+    def _logout(self) -> bool:
+        if not self._d365_session_valid:
+            messagebox.showinfo("Logout", "You are not logged in.")
+            return False
+        if not messagebox.askyesno(
+            "Logout",
+            "Log out of D365? This will clear your saved session.",
+        ):
+            return False
+        if automation_module is None or not hasattr(automation_module, "clear_saved_session"):
+            messagebox.showerror("Logout", "Automation module is not available.")
+            return False
+
+        result = automation_module.clear_saved_session()
+        if not result.get("ok"):
+            messagebox.showerror(
+                "Logout",
+                result.get("reason", "Failed to clear saved session."),
+            )
+            return False
+
+        self._apply_auth_result({"valid": False}, invalidate_pending=True)
+        messagebox.showinfo("Logout", "Logged out successfully.")
+        return True
+
     def _bind_copy_button_tooltip(self, widget: tk.Widget, text: str) -> None:
         tooltip = {"window": None}
 
@@ -1650,13 +2132,16 @@ class Application(tk.Tk):
         widget.bind("<Enter>", show_tooltip)
         widget.bind("<Leave>", hide_tooltip)
 
-    def _refresh_match_counts(self):
-        batch_count = len(self.batch_groups)
-        sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in self.batch_groups)
+    def _refresh_match_counts(self, batch_groups=None):
+        groups = self.batch_groups if batch_groups is None else batch_groups
+        batch_count = len(groups)
+        sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in groups)
         if self.section_count_label:
             self.section_count_label.configure(
                 text=f"Sales Acc Receipt Gen ({batch_count} batches / {sub_batch_count} sub-batches)"
             )
+        if self.row_count_label:
+            self.row_count_label.config(text=f"{batch_count} batches | {sub_batch_count} sub-batches")
 
     def _status_text(self) -> str:
         selected_batch_id = self.selected_batch_var.get().strip()
@@ -2084,6 +2569,9 @@ class Application(tk.Tk):
         return result["ok"]
 
     def _load_transactions(self):
+        if not self._d365_session_valid:
+            return
+
         def worker():
             try:
                 req = urllib.request.Request(
@@ -2133,7 +2621,6 @@ class Application(tk.Tk):
         if batch_groups and (not current_selected or current_selected not in valid_batch_ids):
             first_id = str(batch_groups[0].get("batch_id", "")).strip()
             self.selected_batch_var.set(first_id)
-        self._refresh_match_counts()
         self._apply_filter()
 
     def _select_all_visible_rows(self):
@@ -2146,9 +2633,16 @@ class Application(tk.Tk):
     def _apply_filter(self):
         if not self.cards_frame:
             return
+        if not self._d365_session_valid:
+            return
 
         self._sync_current_edits()
-        self._render_rows(self.batch_groups)
+        filtered = self._filter_batch_groups(self.batch_groups)
+        self._render_rows(filtered)
+        self._refresh_match_counts(filtered)
+        if self.status_bar:
+            self.status_bar.config(text=self._status_text())
+
     def _export_to_excel(self):
         try:
             from tkinter import filedialog
