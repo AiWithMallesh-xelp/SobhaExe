@@ -6,6 +6,7 @@ pw-browsers/
 dist/
 build/
 release/
+release/sobha-app-staging/
 *.spec
 release-check
 installer/harvested.wxs

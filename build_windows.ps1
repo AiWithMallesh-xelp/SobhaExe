@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipMsi
+)
+
 # ============================================================
 #  build_windows.ps1  –  Portable EXE + MSI Windows build
 #  Run from the project folder:  .\build_windows.ps1
@@ -124,40 +128,39 @@ if (Test-Path "README_CLIENT.md") {
 }
 
 Write-Host "[8/8] Creating ZIP packages..." -ForegroundColor Yellow
-$appZipItems = @(
-    "$RELEASEDIR\$APPNAME.exe",
-    "$RELEASEDIR\_internal",
-    "$RELEASEDIR\config.json"
-)
-if (Test-Path "$RELEASEDIR\README_CLIENT.md") {
-    $appZipItems += "$RELEASEDIR\README_CLIENT.md"
+
+Push-Location $RELEASEDIR
+try {
+    Compress-Archive -Path * -DestinationPath "$PSScriptRoot\release\sobha-windows-portable.zip" -Force
+
+    if (Test-Path "pw-browsers") {
+        Compress-Archive -Path "pw-browsers" `
+            -DestinationPath "$PSScriptRoot\release\sobha-pw-browsers.zip" -Force
+    }
+
+    $appStage = Join-Path $PSScriptRoot "release\sobha-app-staging"
+    if (Test-Path $appStage) {
+        Remove-Item $appStage -Recurse -Force
+    }
+    Copy-Item . $appStage -Recurse -Force
+    if (Test-Path "$appStage\pw-browsers") {
+        Remove-Item "$appStage\pw-browsers" -Recurse -Force
+    }
+    Compress-Archive -Path "$appStage\*" `
+        -DestinationPath "$PSScriptRoot\release\sobha-app-only.zip" -Force
+    Remove-Item $appStage -Recurse -Force
 }
-if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
-    $appZipItems += "$RELEASEDIR\sobha_logo_brand.png"
+finally {
+    Pop-Location
 }
 
-$portableZipItems = @(
-    "$RELEASEDIR\$APPNAME.exe",
-    "$RELEASEDIR\_internal",
-    "$RELEASEDIR\config.json",
-    "$RELEASEDIR\pw-browsers"
-)
-if (Test-Path "$RELEASEDIR\README_CLIENT.md") {
-    $portableZipItems += "$RELEASEDIR\README_CLIENT.md"
+if (-not $SkipMsi) {
+    Write-Host ""
+    Write-Host "  Building MSI installer..." -ForegroundColor Yellow
+    & "$PSScriptRoot\installer\build_msi.ps1" `
+        -SourceDir "$PSScriptRoot\$RELEASEDIR" `
+        -OutputMsi "$PSScriptRoot\release\sobha-setup.msi"
 }
-if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
-    $portableZipItems += "$RELEASEDIR\sobha_logo_brand.png"
-}
-
-Compress-Archive -Path $appZipItems -DestinationPath ".\release\sobha-app-only.zip" -Force
-Compress-Archive -Path "$RELEASEDIR\pw-browsers" `
-    -DestinationPath ".\release\sobha-pw-browsers.zip" -Force
-Compress-Archive -Path $portableZipItems `
-    -DestinationPath ".\release\sobha-windows-portable.zip" -Force
-
-Write-Host ""
-Write-Host "  Building MSI installer..." -ForegroundColor Yellow
-& "$PSScriptRoot\installer\build_msi.ps1" -SourceDir "$PSScriptRoot\$RELEASEDIR" -OutputMsi "$PSScriptRoot\release\sobha-setup.msi"
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
@@ -166,7 +169,9 @@ Write-Host "  $PSScriptRoot\release\" -ForegroundColor White
 Write-Host ""
 Write-Host "  Packages:" -ForegroundColor Yellow
 Write-Host "    release\sobha-windows-portable.zip  (portable test package)" -ForegroundColor White
-Write-Host "    release\sobha-setup.msi             (Windows installer)" -ForegroundColor White
+if (-not $SkipMsi) {
+    Write-Host "    release\sobha-setup.msi             (Windows installer)" -ForegroundColor White
+}
 Write-Host "    release\sobha-app-only.zip" -ForegroundColor White
 Write-Host "    release\sobha-pw-browsers.zip" -ForegroundColor White
 Write-Host ""

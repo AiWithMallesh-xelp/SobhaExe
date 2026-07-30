@@ -32,11 +32,19 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Build portable EXE and MSI
+      - name: Build portable EXE
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process Bypass -Force
-          ./build_windows.ps1
+          ./build_windows.ps1 -SkipMsi
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          ./installer/build_msi.ps1 `
+            -SourceDir "$PWD\release\sobha-app" `
+            -OutputMsi "$PWD\release\sobha-setup.msi"
 
       - name: Publish release artifacts to releases/windows
         shell: pwsh

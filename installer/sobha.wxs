@@ -34,10 +34,6 @@
       <Directory Id="ApplicationProgramsFolder" Name="$(ProductName)" />
     </StandardDirectory>
 
-    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.SourceDir)\**" />
-    </ComponentGroup>
-
     <Component
       Id="StartMenuShortcutComponent"
       Directory="ApplicationProgramsFolder"

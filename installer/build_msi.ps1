@@ -15,10 +15,6 @@ if (!(Test-Path $SourceDir)) {
     Write-Error "MSI source directory not found: $SourceDir"
 }
 
-if (!(Test-Path "$Root\installer\sobha.wxs")) {
-    Write-Error "WiX source not found: installer\sobha.wxs"
-}
-
 Write-Host "  Installing WiX Toolset..." -ForegroundColor DarkCyan
 dotnet tool install --global wix
 if ($LASTEXITCODE -ne 0) {
@@ -30,14 +26,23 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";
 
 wix extension add WixToolset.UI.wixext --force
 
+$HarvestFile = Join-Path $Root "installer\harvested.wxs"
 $SourceDirResolved = (Resolve-Path $SourceDir).Path
 $outputDir = Split-Path -Parent $OutputMsi
 if ($outputDir -and !(Test-Path $outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 }
 
-Write-Host "  Building MSI from $SourceDirResolved ..." -ForegroundColor DarkCyan
-wix build "$Root\installer\sobha.wxs" `
+Write-Host "  Harvesting $SourceDirResolved ..." -ForegroundColor DarkCyan
+heat dir $SourceDirResolved `
+    -cg AppFiles `
+    -dr INSTALLFOLDER `
+    -ke -scom -sreg -sfrag -srd `
+    -var var.SourceDir `
+    -out $HarvestFile
+
+Write-Host "  Building MSI -> $OutputMsi ..." -ForegroundColor DarkCyan
+wix build "$Root\installer\sobha.wxs" $HarvestFile `
     -ext WixToolset.UI.wixext `
     -d "SourceDir=$SourceDirResolved" `
     -o $OutputMsi
