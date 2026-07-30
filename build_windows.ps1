@@ -1,35 +1,35 @@
 # ============================================================
-#  build_windows.ps1  –  One-click portable Windows build
+#  build_windows.ps1  –  Portable EXE + MSI Windows build
 #  Run from the project folder:  .\build_windows.ps1
 # ============================================================
 $ErrorActionPreference = "Stop"
 
-$ENTRY   = "sales_receipt_generation.py"
-$APPNAME = "sobha"
+$ENTRY      = "sales_receipt_generation.py"
+$APPNAME    = "sobha"
+$RELEASEDIR = "release\sobha-app"
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "  Building $APPNAME.exe from $ENTRY"         -ForegroundColor Cyan
+Write-Host "  Building $APPNAME (onedir) from $ENTRY"    -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Ensure we run from the script's own directory
 Set-Location -Path $PSScriptRoot
 
 # ── 1. Create venv if missing ────────────────────────────────
 if (!(Test-Path ".venv")) {
-    Write-Host "[1/6] Creating virtual environment..." -ForegroundColor Yellow
+    Write-Host "[1/8] Creating virtual environment..." -ForegroundColor Yellow
     py -m venv .venv
 } else {
-    Write-Host "[1/6] Virtual environment already exists." -ForegroundColor Green
+    Write-Host "[1/8] Virtual environment already exists." -ForegroundColor Green
 }
 
 # ── 2. Activate venv ────────────────────────────────────────
-Write-Host "[2/6] Activating venv..." -ForegroundColor Yellow
+Write-Host "[2/8] Activating venv..." -ForegroundColor Yellow
 & ".\.venv\Scripts\Activate.ps1"
 
 # ── 3. Install Python dependencies ──────────────────────────
-Write-Host "[3/6] Installing dependencies..." -ForegroundColor Yellow
+Write-Host "[3/8] Installing dependencies..." -ForegroundColor Yellow
 python -m pip install --upgrade pip --quiet
 
 if (Test-Path "requirements.txt") {
@@ -42,25 +42,37 @@ if (Test-Path "requirements.txt") {
 pip install pyinstaller --quiet
 Write-Host "  Dependencies installed." -ForegroundColor Green
 
-# ── 4. Download Chromium into portable pw-browsers/ ─────────
-Write-Host "[4/6] Downloading Playwright Chromium (portable)..." -ForegroundColor Yellow
+# ── 4. Optional app icon ────────────────────────────────────
+Write-Host "[4/8] Preparing icon..." -ForegroundColor Yellow
+if (Test-Path "scripts\generate_icon.py") {
+    pip install pillow --quiet
+    python scripts\generate_icon.py
+}
+
+# ── 5. Download Chromium into portable pw-browsers/ ─────────
+Write-Host "[5/8] Downloading Playwright Chromium (portable)..." -ForegroundColor Yellow
 $env:PLAYWRIGHT_BROWSERS_PATH = "$PSScriptRoot\pw-browsers"
 python -m playwright install chromium
 Write-Host "  Chromium ready in: $PSScriptRoot\pw-browsers" -ForegroundColor Green
 
-# ── 5. Build exe with PyInstaller ───────────────────────────
-Write-Host "[5/6] Building $APPNAME.exe with PyInstaller..." -ForegroundColor Yellow
+# ── 6. Build exe with PyInstaller (onedir) ──────────────────
+Write-Host "[6/8] Building $APPNAME.exe with PyInstaller (onedir)..." -ForegroundColor Yellow
 
 $pyinstallerArgs = @(
     "--noconfirm",
     "--clean",
-    "--onefile",
+    "--onedir",
     "--windowed",
     "--name", $APPNAME,
     "--collect-all", "playwright"
 )
 
-# Include forest-light.tcl theme if it exists
+if (Test-Path "installer\sobha.ico") {
+    $pyinstallerArgs += "--icon"
+    $pyinstallerArgs += "installer\sobha.ico"
+    Write-Host "  Using installer\sobha.ico" -ForegroundColor DarkCyan
+}
+
 if (Test-Path "forest-light.tcl") {
     $pyinstallerArgs += "--add-data"
     $pyinstallerArgs += "forest-light.tcl;."
@@ -71,94 +83,88 @@ $pyinstallerArgs += $ENTRY
 
 & pyinstaller @pyinstallerArgs
 
-if (!(Test-Path "dist\$APPNAME.exe")) {
-    Write-Host "ERROR: dist\$APPNAME.exe was not created. Check PyInstaller output above." -ForegroundColor Red
+if (!(Test-Path "dist\$APPNAME\$APPNAME.exe")) {
+    Write-Host "ERROR: dist\$APPNAME\$APPNAME.exe was not created. Check PyInstaller output above." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Build successful: dist\$APPNAME.exe" -ForegroundColor Green
+Write-Host "  Build successful: dist\$APPNAME\$APPNAME.exe" -ForegroundColor Green
 
-# ── 6. Assemble release/ folder ─────────────────────────────
-Write-Host "[6/7] Assembling release folder..." -ForegroundColor Yellow
+# ── 7. Assemble release/sobha-app/ folder ───────────────────
+Write-Host "[7/8] Assembling $RELEASEDIR folder..." -ForegroundColor Yellow
 
 if (Test-Path "release") {
     Remove-Item -Recurse -Force "release"
 }
-New-Item -ItemType Directory -Path "release" | Out-Null
+New-Item -ItemType Directory -Path $RELEASEDIR -Force | Out-Null
 
-# Core files
-Copy-Item ".\dist\$APPNAME.exe"  ".\release\$APPNAME.exe"  -Force
-Copy-Item ".\config.json"        ".\release\config.json"    -Force
+Copy-Item ".\dist\$APPNAME\*" $RELEASEDIR -Recurse -Force
+Copy-Item ".\config.json" "$RELEASEDIR\config.json" -Force
 
 if (Test-Path "sobha_logo_brand.png") {
-    Copy-Item ".\sobha_logo_brand.png" ".\release\sobha_logo_brand.png" -Force
+    Copy-Item ".\sobha_logo_brand.png" "$RELEASEDIR\sobha_logo_brand.png" -Force
     Write-Host "  sobha_logo_brand.png included." -ForegroundColor DarkCyan
 } else {
     Write-Host "WARNING: sobha_logo_brand.png not found – app header logo will be missing." -ForegroundColor DarkYellow
 }
 
-# Optional: pre-bundled auth session (client starts logged in)
 if (Test-Path "auth.json") {
-    Copy-Item ".\auth.json" ".\release\auth.json" -Force
+    Copy-Item ".\auth.json" "$RELEASEDIR\auth.json" -Force
     Write-Host "  auth.json included (client starts logged in)." -ForegroundColor DarkCyan
 }
 
-# Playwright browser binaries (required for no-setup run)
 if (Test-Path "pw-browsers") {
-    Copy-Item ".\pw-browsers" ".\release\pw-browsers" -Recurse -Force
+    Copy-Item ".\pw-browsers" "$RELEASEDIR\pw-browsers" -Recurse -Force
 } else {
     Write-Host "ERROR: pw-browsers/ folder missing – Playwright install step failed." -ForegroundColor Red
     exit 1
 }
 
-# Client readme
 if (Test-Path "README_CLIENT.md") {
-    Copy-Item ".\README_CLIENT.md" ".\release\README_CLIENT.md" -Force
+    Copy-Item ".\README_CLIENT.md" "$RELEASEDIR\README_CLIENT.md" -Force
 }
 
-Write-Host "[7/7] Creating ZIP packages..." -ForegroundColor Yellow
-$zipItems = @(
-    ".\release\$APPNAME.exe",
-    ".\release\config.json",
-    ".\release\README_CLIENT.md"
+Write-Host "[8/8] Creating ZIP packages..." -ForegroundColor Yellow
+$appZipItems = @(
+    "$RELEASEDIR\$APPNAME.exe",
+    "$RELEASEDIR\_internal",
+    "$RELEASEDIR\config.json",
+    "$RELEASEDIR\README_CLIENT.md"
 )
-if (Test-Path ".\release\sobha_logo_brand.png") {
-    $zipItems += ".\release\sobha_logo_brand.png"
-}
-$portableItems = @(
-    ".\release\$APPNAME.exe",
-    ".\release\config.json",
-    ".\release\README_CLIENT.md",
-    ".\release\pw-browsers"
-)
-if (Test-Path ".\release\sobha_logo_brand.png") {
-    $portableItems = @(
-        ".\release\$APPNAME.exe",
-        ".\release\config.json",
-        ".\release\README_CLIENT.md",
-        ".\release\sobha_logo_brand.png",
-        ".\release\pw-browsers"
-    )
+if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
+    $appZipItems += "$RELEASEDIR\sobha_logo_brand.png"
 }
 
-Compress-Archive -Path $zipItems -DestinationPath ".\release\sobha-app-only.zip" -Force
-Compress-Archive -Path ".\release\pw-browsers" `
+$portableZipItems = @(
+    "$RELEASEDIR\$APPNAME.exe",
+    "$RELEASEDIR\_internal",
+    "$RELEASEDIR\config.json",
+    "$RELEASEDIR\README_CLIENT.md",
+    "$RELEASEDIR\pw-browsers"
+)
+if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
+    $portableZipItems += "$RELEASEDIR\sobha_logo_brand.png"
+}
+
+Compress-Archive -Path $appZipItems -DestinationPath ".\release\sobha-app-only.zip" -Force
+Compress-Archive -Path "$RELEASEDIR\pw-browsers" `
     -DestinationPath ".\release\sobha-pw-browsers.zip" -Force
-Compress-Archive -Path $portableItems `
+Compress-Archive -Path $portableZipItems `
     -DestinationPath ".\release\sobha-windows-portable.zip" -Force
+
+Write-Host ""
+Write-Host "  Building MSI installer..." -ForegroundColor Yellow
+& "$PSScriptRoot\installer\build_msi.ps1" -SourceDir "$PSScriptRoot\$RELEASEDIR" -OutputMsi "$PSScriptRoot\release\sobha-setup.msi"
 
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "  DONE! Release folder ready:" -ForegroundColor Green
 Write-Host "  $PSScriptRoot\release\" -ForegroundColor White
 Write-Host ""
-Write-Host "  ZIP packages:" -ForegroundColor Yellow
-Write-Host "    release\sobha-windows-portable.zip  (full test package)" -ForegroundColor White
+Write-Host "  Packages:" -ForegroundColor Yellow
+Write-Host "    release\sobha-windows-portable.zip  (portable test package)" -ForegroundColor White
+Write-Host "    release\sobha-setup.msi             (Windows installer)" -ForegroundColor White
 Write-Host "    release\sobha-app-only.zip" -ForegroundColor White
 Write-Host "    release\sobha-pw-browsers.zip" -ForegroundColor White
 Write-Host ""
-Write-Host "  Contents sent to client:" -ForegroundColor Yellow
 Get-ChildItem ".\release" | Format-Table Name, Length -AutoSize
-Write-Host ""
-Write-Host "  Send sobha-windows-portable.zip to the client." -ForegroundColor Yellow
-Write-Host "  Client: extract fully, then double-click sobha.exe" -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan

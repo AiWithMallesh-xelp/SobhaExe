@@ -1,12 +1,22 @@
 # Sobha Reconciliation (Portable)
 
-## How to run
+## How to run (portable ZIP)
 
 1. Extract the ZIP fully — **do not run from inside the ZIP**.
 2. Open the extracted folder.
 3. Double-click **sobha.exe**.
 
 > If Windows SmartScreen appears: click **More info** → **Run anyway**.
+
+---
+
+## How to install (MSI)
+
+1. Double-click **sobha-setup.msi**.
+2. Follow the install wizard (installs to your user folder, no admin required).
+3. Open **Sobha Reconciliation** from the Start Menu.
+
+To uninstall: **Settings → Apps → Sobha Reconciliation → Uninstall**.
 
 ---
 

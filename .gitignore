@@ -8,4 +8,5 @@ build/
 release/
 *.spec
 release-check
+installer/harvested.wxs
 !.gitkeep

@@ -1,10 +1,10 @@
-name: Build Windows Portable EXE
+name: Build Windows EXE and MSI
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - shobhaexe
+      - shobhaexe-msi
     paths-ignore:
       - "releases/windows/**"
       - "releases/windows/.gitattributes"
@@ -27,67 +27,39 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build portable EXE
+      - name: Setup .NET (WiX)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build portable EXE and MSI
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process Bypass -Force
           ./build_windows.ps1
 
-      - name: Create release ZIP files
+      - name: Publish release artifacts to releases/windows
         shell: pwsh
         run: |
-          $APPNAME = (Select-String -Path build_windows.ps1 -Pattern '\$APPNAME\s*=\s*"(\w+)"').Matches[0].Groups[1].Value
-
-          if (!(Test-Path "release\README_CLIENT.md") -and (Test-Path "README_CLIENT.md")) {
-            Copy-Item README_CLIENT.md release\README_CLIENT.md -Force
-          }
-
-          $appZipItems = @(
-            "release\$APPNAME.exe",
-            "release\config.json",
-            "release\README_CLIENT.md"
-          )
-          if (Test-Path "release\sobha_logo_brand.png") {
-            $appZipItems += "release\sobha_logo_brand.png"
-          }
-
-          $portableZipItems = @(
-            "release\$APPNAME.exe",
-            "release\config.json",
-            "release\README_CLIENT.md",
-            "release\pw-browsers"
-          )
-          if (Test-Path "release\sobha_logo_brand.png") {
-            $portableZipItems = @(
-              "release\$APPNAME.exe",
-              "release\config.json",
-              "release\README_CLIENT.md",
-              "release\sobha_logo_brand.png",
-              "release\pw-browsers"
-            )
-          }
-
-          Compress-Archive -Path $appZipItems `
-            -DestinationPath release\sobha-app-only.zip -Force
-
-          Compress-Archive -Path release\pw-browsers `
-            -DestinationPath release\sobha-pw-browsers.zip -Force
-
-          Compress-Archive -Path $portableZipItems `
-            -DestinationPath release\sobha-windows-portable.zip -Force
-
           New-Item -ItemType Directory -Force -Path releases/windows | Out-Null
+          Copy-Item release\sobha-windows-portable.zip releases/windows\ -Force
           Copy-Item release\sobha-app-only.zip releases/windows\ -Force
           Copy-Item release\sobha-pw-browsers.zip releases/windows\ -Force
-          Copy-Item release\sobha-windows-portable.zip releases/windows\ -Force
+          Copy-Item release\sobha-setup.msi releases/windows\ -Force
 
+          $msi = Get-Item release\sobha-setup.msi
+          $portable = Get-Item release\sobha-windows-portable.zip
           @"
           {
             "run_number": ${{ github.run_number }},
             "run_id": "${{ github.run_id }}",
             "sha": "${{ github.sha }}",
             "branch": "${{ github.ref_name }}",
-            "built_at_utc": "$(Get-Date -Format o)"
+            "built_at_utc": "$(Get-Date -Format o)",
+            "msi_file": "sobha-setup.msi",
+            "msi_size_bytes": $($msi.Length),
+            "portable_zip_file": "sobha-windows-portable.zip",
+            "portable_zip_size_bytes": $($portable.Length)
           }
           "@ | Set-Content releases/windows/build-info.json -Encoding utf8
 
@@ -105,7 +77,14 @@ jobs:
           path: releases/windows/sobha-windows-portable.zip
           retention-days: 30
 
-      - name: Commit release ZIPs to repo
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sobha-setup-msi
+          path: releases/windows/sobha-setup.msi
+          retention-days: 30
+
+      - name: Commit release artifacts to repo
         shell: bash
         run: |
           git lfs install
@@ -116,7 +95,7 @@ jobs:
             echo "No release file changes to commit."
             exit 0
           fi
-          git commit -m "ci: update Windows portable build zips (run ${{ github.run_number }})"
+          git commit -m "ci: update Windows EXE and MSI build artifacts (run ${{ github.run_number }})"
           git push
 
       - name: Create GitHub Release
@@ -125,10 +104,13 @@ jobs:
           tag_name: windows-build-${{ github.run_number }}
           name: "Sobha Windows Build ${{ github.run_number }}"
           body: |
-            ## Windows test package
+            ## Windows packages
 
-            ### Recommended
-            Download **sobha-windows-portable.zip** — contains everything needed to test on Windows.
+            ### Recommended for testing (portable)
+            Download **sobha-windows-portable.zip** — extract fully, then double-click `sobha.exe`.
+
+            ### Recommended for install (MSI)
+            Download **sobha-setup.msi** — double-click to install, then open from Start Menu.
 
             ### Split downloads
             1. **sobha-app-only.zip** — exe + config + readme
@@ -138,6 +120,7 @@ jobs:
             Built from branch `${{ github.ref_name }}` at `${{ github.sha }}`.
           files: |
             releases/windows/sobha-windows-portable.zip
+            releases/windows/sobha-setup.msi
             releases/windows/sobha-app-only.zip
             releases/windows/sobha-pw-browsers.zip
           draft: false
