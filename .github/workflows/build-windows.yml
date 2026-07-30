@@ -39,12 +39,14 @@ jobs:
           ./build_windows.ps1 -SkipMsi
 
       - name: Build MSI installer
+        continue-on-error: true
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process Bypass -Force
           ./installer/build_msi.ps1 `
             -SourceDir "$PWD\release\sobha-app" `
-            -OutputMsi "$PWD\release\sobha-setup.msi"
+            -OutputMsi "$PWD\release\sobha-setup.msi" `
+            -LogFile "$PWD\release\msi-build.log"
 
       - name: Publish release artifacts to releases/windows
         if: always()
@@ -58,6 +60,10 @@ jobs:
           Copy-Item release\sobha-windows-portable.zip releases/windows/ -Force
           Copy-Item release\sobha-app-only.zip releases/windows/ -Force
           Copy-Item release\sobha-pw-browsers.zip releases/windows/ -Force
+
+          if (Test-Path "release\msi-build.log") {
+            Copy-Item release\msi-build.log releases/windows/ -Force
+          }
 
           $info = [ordered]@{
             run_number = ${{ github.run_number }}
@@ -147,5 +153,6 @@ jobs:
             releases/windows/sobha-setup.msi
             releases/windows/sobha-app-only.zip
             releases/windows/sobha-pw-browsers.zip
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
