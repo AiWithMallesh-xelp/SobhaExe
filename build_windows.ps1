@@ -127,9 +127,11 @@ Write-Host "[8/8] Creating ZIP packages..." -ForegroundColor Yellow
 $appZipItems = @(
     "$RELEASEDIR\$APPNAME.exe",
     "$RELEASEDIR\_internal",
-    "$RELEASEDIR\config.json",
-    "$RELEASEDIR\README_CLIENT.md"
+    "$RELEASEDIR\config.json"
 )
+if (Test-Path "$RELEASEDIR\README_CLIENT.md") {
+    $appZipItems += "$RELEASEDIR\README_CLIENT.md"
+}
 if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
     $appZipItems += "$RELEASEDIR\sobha_logo_brand.png"
 }
@@ -138,9 +140,11 @@ $portableZipItems = @(
     "$RELEASEDIR\$APPNAME.exe",
     "$RELEASEDIR\_internal",
     "$RELEASEDIR\config.json",
-    "$RELEASEDIR\README_CLIENT.md",
     "$RELEASEDIR\pw-browsers"
 )
+if (Test-Path "$RELEASEDIR\README_CLIENT.md") {
+    $portableZipItems += "$RELEASEDIR\README_CLIENT.md"
+}
 if (Test-Path "$RELEASEDIR\sobha_logo_brand.png") {
     $portableZipItems += "$RELEASEDIR\sobha_logo_brand.png"
 }
