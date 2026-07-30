@@ -59,36 +59,27 @@ jobs:
           Copy-Item release\sobha-app-only.zip releases/windows/ -Force
           Copy-Item release\sobha-pw-browsers.zip releases/windows/ -Force
 
-          $portable = Get-Item release\sobha-windows-portable.zip
-          $msiInfo = ""
+          $info = [ordered]@{
+            run_number = ${{ github.run_number }}
+            run_id = "${{ github.run_id }}"
+            sha = "${{ github.sha }}"
+            branch = "${{ github.ref_name }}"
+            built_at_utc = (Get-Date -Format o)
+            portable_zip_file = "sobha-windows-portable.zip"
+            portable_zip_size_bytes = (Get-Item "release\sobha-windows-portable.zip").Length
+          }
+
           if (Test-Path "release\sobha-setup.msi") {
             Copy-Item release\sobha-setup.msi releases/windows/ -Force
-            $msi = Get-Item release\sobha-setup.msi
-            $msiInfo = @"
-
-            "msi_file": "sobha-setup.msi",
-            "msi_size_bytes": $($msi.Length),
-"@
+            $info.msi_file = "sobha-setup.msi"
+            $info.msi_size_bytes = (Get-Item "release\sobha-setup.msi").Length
           } else {
-            $msiInfo = @"
-
-            "msi_file": null,
-            "msi_size_bytes": 0,
-            "msi_build_failed": true,
-"@
+            $info.msi_file = $null
+            $info.msi_size_bytes = 0
+            $info.msi_build_failed = $true
           }
 
-          @"
-          {
-            "run_number": ${{ github.run_number }},
-            "run_id": "${{ github.run_id }}",
-            "sha": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "built_at_utc": "$(Get-Date -Format o)",$msiInfo
-            "portable_zip_file": "sobha-windows-portable.zip",
-            "portable_zip_size_bytes": $($portable.Length)
-          }
-          "@ | Set-Content releases/windows/build-info.json -Encoding utf8
+          ($info | ConvertTo-Json -Depth 4) | Set-Content releases/windows/build-info.json -Encoding utf8
 
       - name: Upload release folder as artifact
         if: always()
