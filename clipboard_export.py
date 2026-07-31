@@ -60,6 +60,75 @@ EXTRA_FIELD_LABELS = {
 PRESET_FIELD_LABELS = {**TRANSACTION_FIELD_LABELS, **EXTRA_FIELD_LABELS}
 PRESET_FIELD_KEYS = list(dict.fromkeys(TRANSACTION_FIELD_KEYS + list(EXTRA_FIELD_LABELS)))
 DATE_FIELD_KEYS = frozenset({"date", "value_date", "reference_date", "account_date"})
+SPACER_FIELD_KEY = "__spacer__"
+
+# Normalized D365 header label -> field key (built from DEFAULT_CLIPBOARD_COL_DEFS)
+HEADER_LABEL_TO_KEY: dict[str, str] = {
+    re.sub(r"\s+", " ", label.strip().casefold()): key
+    for key, label in DEFAULT_CLIPBOARD_COL_DEFS
+}
+
+# Extra D365 labels that appear in the grid but are not pasted from our data
+UNMAPPED_HEADER_LABELS = frozenset(
+    {
+        "account type",
+        "offset company",
+        "ledger dimension",
+        "financial dimensions",
+    }
+)
+
+
+def normalize_header_label(header: str) -> str:
+    return re.sub(r"\s+", " ", str(header or "").strip().casefold())
+
+
+def header_to_field_key(header: str) -> str | None:
+    """Map a live D365 column header to a transaction field key, or None for spacer."""
+    norm = normalize_header_label(header)
+    if not norm or norm in UNMAPPED_HEADER_LABELS:
+        return None
+    return HEADER_LABEL_TO_KEY.get(norm)
+
+
+def col_defs_from_live_headers(headers: list, source_col_defs: Optional[list] = None) -> list:
+    """Build paste column defs in live D365 left-to-right order; unknown headers become blank spacers."""
+    source = {
+        col["key"]: col
+        for col in normalize_col_defs(source_col_defs or load_clipboard_col_defs())
+        if col.get("key")
+    }
+    ordered: list[dict] = []
+    for header in headers:
+        text = str(header or "").strip()
+        if not text:
+            continue
+        key = header_to_field_key(text)
+        if key is None:
+            ordered.append({"key": SPACER_FIELD_KEY, "label": text, "default_value": ""})
+        else:
+            ordered.append(
+                source.get(
+                    key,
+                    {"key": key, "label": text, "default_value": ""},
+                )
+            )
+    return ordered
+
+
+def validate_live_paste_columns(col_defs: list) -> None:
+    """Require Date and Account columns in the live grid mapping."""
+    mapped_keys = {
+        col["key"] for col in col_defs if col.get("key") and col["key"] != SPACER_FIELD_KEY
+    }
+    missing = [name for name, key in (("Date", "date"), ("Account", "account")) if key not in mapped_keys]
+    if missing:
+        labels = [col.get("label", "") for col in col_defs if col.get("label")]
+        raise ValueError(
+            "D365 grid is missing required column(s) for bulk paste: "
+            + ", ".join(missing)
+            + (f". Detected headers: {labels}" if labels else ".")
+        )
 
 
 def normalize_date(date_str):
@@ -144,6 +213,8 @@ def slug_custom_field_key(header: str, used_keys: set) -> str:
 
 def resolve_clipboard_cell(txn: dict, col: dict) -> str:
     key = col.get("key", "")
+    if key == SPACER_FIELD_KEY:
+        return ""
     value = txn.get(key, "")
     if value is None or str(value).strip() == "":
         raw = str(col.get("default_value", "") or "")
@@ -238,10 +309,18 @@ def col_defs_for_d365_paste(col_defs: Optional[list] = None) -> list:
     ]
 
 
-def build_paste_clipboard_text(transactions: list, col_defs: Optional[list] = None) -> str:
+def build_paste_clipboard_text(
+    transactions: list,
+    col_defs: Optional[list] = None,
+    *,
+    use_live_order: bool = False,
+) -> str:
     """Build tab-separated data rows only (no header) for D365 grid paste."""
-    d365_cols = col_defs_for_d365_paste(col_defs)
-    _headers, data_rows = _build_data_rows(transactions, d365_cols)
+    if use_live_order and col_defs:
+        paste_cols = normalize_col_defs(col_defs)
+    else:
+        paste_cols = col_defs_for_d365_paste(col_defs)
+    _headers, data_rows = _build_data_rows(transactions, paste_cols)
     lines = [
         "\t".join(excel_escape_cell(cell) for cell in row)
         for row in data_rows

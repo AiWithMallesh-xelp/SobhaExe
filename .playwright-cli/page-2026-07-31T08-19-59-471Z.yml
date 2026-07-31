@@ -1,0 +1,397 @@
+- generic [ref=f3e1]:
+  - alert [ref=f3e2]: Please wait. We're processing your request.
+  - banner "Navigation bar" [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - link "Office 365" [ref=f3e5] [cursor=pointer]:
+        - generic [ref=f3e6]: 
+      - button "Finance and Operations" [ref=f3e8] [cursor=pointer]:
+        - generic [ref=f3e9]:
+          - text: 
+          - generic [ref=f3e10]: Finance and Operations
+    - list [ref=f3e11]
+    - button "Current company is rel, activate to choose a company" [ref=f3e13] [cursor=pointer]: REL
+    - generic [ref=f3e14]:
+      - list [ref=f3e15]:
+        - listitem [ref=f3e16]:
+          - button "Copilot" [ref=f3e17] [cursor=pointer]:
+            - img "Image NavBarActions_SysCopilotChatPanel" [ref=f3e20]
+      - button "Search" [ref=f3e22] [cursor=pointer]:
+        - generic [ref=f3e23]: 
+      - button "Show messages (Ctrl+Shift+F7) Open to view system messages." [ref=f3e26] [cursor=pointer]: 
+      - button "Feedback" [ref=f3e27] [cursor=pointer]:
+        - generic [ref=f3e28]: 
+      - generic [ref=f3e31] [cursor=pointer]:
+        - button "Settings" [ref=f3e32]:
+          - generic [ref=f3e33]:
+            - generic [ref=f3e34]: 
+            - text: 
+        - text:   
+      - generic [ref=f3e35] [cursor=pointer]:
+        - button "Help & Support" [ref=f3e36]:
+          - generic [ref=f3e37]:
+            - generic [ref=f3e38]: 
+            - text: 
+        - text:    
+      - text:  
+      - button "D3" [ref=f3e40] [cursor=pointer]
+  - navigation "Navigation menu" [ref=f3e43]:
+    - button "Expand the navigation pane" [ref=f3e44] [cursor=pointer]: 
+    - tree [ref=f3e45]:
+      - treeitem "Home" [level=1] [ref=f3e46] [cursor=pointer]:
+        - generic [ref=f3e47]: 
+      - treeitem "Favorites" [level=1] [ref=f3e48] [cursor=pointer]:
+        - generic [ref=f3e49]: 
+      - treeitem "Recent" [level=1] [ref=f3e50] [cursor=pointer]:
+        - generic [ref=f3e51]: 
+      - treeitem "Workspaces" [level=1] [ref=f3e52] [cursor=pointer]:
+        - generic [ref=f3e53]: 
+      - treeitem "Modules" [level=1] [ref=f3e54] [cursor=pointer]:
+        - generic [ref=f3e55]: 
+  - main [ref=f3e56]:
+    - text: "                           |      ::  :: :: ::  :: :: :: :: :: :: :: :: :: ::  "
+    - 'form "Customer payments: REL-009495 : ARBR" [ref=f3e3760]':
+      - toolbar [ref=f3e3761]:
+        - button "Back" [ref=f3e3762] [cursor=pointer]:
+          - generic [ref=f3e3763]: 
+        - button " Save" [ref=f3e3765] [cursor=pointer]:
+          - generic [ref=f3e3766]:
+            - generic [ref=f3e3767]: 
+            - generic [ref=f3e3768]: Save
+        - button "Post" [ref=f3e3769] [cursor=pointer]:
+          - generic [ref=f3e3770]:  Post
+        - button "Post in batch" [ref=f3e3771] [cursor=pointer]:
+          - generic [ref=f3e3772]:  Post in batch
+        - button "Validate" [ref=f3e3774] [cursor=pointer]:
+          - generic [ref=f3e3775]:  Validate
+        - button "Period journal" [ref=f3e3776] [cursor=pointer]:
+          - generic [ref=f3e3777]:  Period journal
+        - button "Payment proposal" [ref=f3e3779] [cursor=pointer]:
+          - generic [ref=f3e3780]:  Payment proposal
+        - button "Functions" [ref=f3e3782] [cursor=pointer]:
+          - generic [ref=f3e3783]:  Functions
+        - button "Inquiries" [ref=f3e3785] [cursor=pointer]:
+          - generic [ref=f3e3786]:  Inquiries
+        - button "Print" [ref=f3e3788] [cursor=pointer]:
+          - generic [ref=f3e3789]:  Print
+        - button "Customer Receipt" [ref=f3e3791] [cursor=pointer]:
+          - generic [ref=f3e3792]:  Customer Receipt
+        - button "Options" [ref=f3e3794] [cursor=pointer]
+        - button "Search for an action" [ref=f3e3796] [cursor=pointer]: 
+        - text: 
+        - button "Power Apps" [ref=f3e3798] [cursor=pointer]:
+          - generic [ref=f3e3799]:
+            - generic [ref=f3e3800]: 
+            - text: 
+        - button "Open in Microsoft Office" [ref=f3e3802] [cursor=pointer]:
+          - generic [ref=f3e3803]:
+            - generic [ref=f3e3804]: 
+            - text: 
+        - button "Attachments (0)" [ref=f3e3805] [cursor=pointer]:
+          - generic [ref=f3e3806]:
+            - generic [ref=f3e3807]: 
+            - generic [ref=f3e3808]: "0"
+        - button "Refresh" [ref=f3e3809] [cursor=pointer]:
+          - generic [ref=f3e3810]: 
+        - button "Open in new window" [ref=f3e3812] [cursor=pointer]:
+          - generic [ref=f3e3813]: 
+      - button "Show filters" [ref=f3e3815] [cursor=pointer]:
+        - generic [ref=f3e3816]: 
+      - 'region "Customer payments: REL-009495 : ARBR" [ref=f3e3818]':
+        - generic [ref=f3e3820]:
+          - heading [level=1] [ref=f3e3822]:
+            - text: "Customer payments|REL-009495 : ARBR"
+            - button "Standard view" [ref=f3e3823] [cursor=pointer]:
+              - generic [ref=f3e3824]:  Standard view
+          - generic [ref=f3e3825]:
+            - tablist [ref=f3e3826]:
+              - tab "List" [selected] [ref=f3e3827] [cursor=pointer]
+              - tab "General" [ref=f3e3828] [cursor=pointer]
+              - tab "Payment fee" [ref=f3e3829] [cursor=pointer]
+              - tab "Bank" [ref=f3e3830] [cursor=pointer]
+              - tab "History" [ref=f3e3831] [cursor=pointer]
+              - tab "Payment" [ref=f3e3832] [cursor=pointer]
+              - tab "Postdated checks" [ref=f3e3833] [cursor=pointer]
+            - text:  
+            - tabpanel "List" [ref=f3e3834]:
+              - generic [ref=f3e3835]:
+                - toolbar [ref=f3e3836]:
+                  - group [ref=f3e3837]:
+                    - button " New" [ref=f3e3838] [cursor=pointer]:
+                      - generic [ref=f3e3839]:
+                        - generic [ref=f3e3840]: 
+                        - generic [ref=f3e3841]: New
+                    - button " Delete" [ref=f3e3842] [cursor=pointer]:
+                      - generic [ref=f3e3843]:
+                        - generic [ref=f3e3844]: 
+                        - generic [ref=f3e3845]: Delete
+                  - group [ref=f3e3846]:
+                    - button "Settle transactions" [ref=f3e3847] [cursor=pointer]:
+                      - generic [ref=f3e3848]:
+                        - text: 
+                        - generic [ref=f3e3849]: Settle transactions
+                    - button "Financial dimensions" [ref=f3e3851] [cursor=pointer]:
+                      - generic [ref=f3e3852]:
+                        - text: 
+                        - generic [ref=f3e3853]: Financial dimensions
+                    - button "Tax document" [ref=f3e3854] [cursor=pointer]:
+                      - generic [ref=f3e3855]:
+                        - text: 
+                        - generic [ref=f3e3856]: Tax document
+                    - button "Payment status" [ref=f3e3858] [cursor=pointer]:
+                      - generic [ref=f3e3859]:
+                        - text: 
+                        - generic [ref=f3e3860]: Payment status
+                    - button "View marked transactions" [ref=f3e3861] [cursor=pointer]:
+                      - generic [ref=f3e3862]:
+                        - text: 
+                        - generic [ref=f3e3863]: View marked transactions
+                    - button "Tax information" [ref=f3e3864] [cursor=pointer]:
+                      - generic [ref=f3e3865]:
+                        - text: 
+                        - generic [ref=f3e3866]: Tax information
+                  - text: 
+                - grid "Journal lines" [ref=f3e3870]:
+                  - generic [ref=f3e3871]:
+                    - row [ref=f3e3873]:
+                      - generic:
+                        - generic [ref=f3e3875]:
+                          - columnheader [ref=f3e3876]:
+                            - checkbox "Select or unselect all rows" [ref=f3e3877] [cursor=pointer]
+                          - columnheader [ref=f3e3884]:
+                            - status "Indicates the current status of the row, in particular if the row is up-to-date, has unsaved changes, has a validation issue, or is waiting for user input." [ref=f3e3885]
+                        - generic [ref=f3e3893]:
+                          - columnheader "Date" [ref=f3e3894]:
+                            - text: "::"
+                            - generic "Date Enter the posting date. The default date is the system date, which is typically today's date. When the date on a line has been changed, that is the default date when a new line is created." [ref=f3e3897]: Date
+                          - columnheader "Value date" [ref=f3e3898]:
+                            - text: "::"
+                            - generic "Value date" [ref=f3e3901]
+                          - columnheader "Voucher" [ref=f3e3902]:
+                            - text: "::"
+                            - generic "Voucher The voucher number for the transaction. Voucher series are set up in the Number sequences page. If the Continuous option is selected in the Number sequences page and no user changes are allowed (the To a lower number and To a higher number options are cleared), this field is skipped when you move through the fields in the page. The voucher series is selected for the journal name in the Voucher series field in the Journal names page." [ref=f3e3905]: Voucher
+                          - columnheader "Company" [ref=f3e3906]:
+                            - text: "::"
+                            - generic "Company ID for the company you can select" [ref=f3e3909]: Company
+                          - columnheader "Account" [ref=f3e3910]:
+                            - text: "::"
+                            - generic "Account" [ref=f3e3913]
+                          - columnheader "Account name" [ref=f3e3914]:
+                            - text: "::"
+                            - generic "Account name" [ref=f3e3917]
+                          - columnheader "Payee name" [ref=f3e3918]:
+                            - text: "::"
+                            - generic "Payee name Enter the full legal name of the payee as registered with the bank for the provided IBAN. This information is derived from the details added on the customer/vendor bank account form." [ref=f3e3921]: Payee name
+                          - columnheader "Invoice" [ref=f3e3922]:
+                            - text: "::"
+                            - generic "Invoice Enter or select the invoice number that is related to the payment. For example, if you received a payment receipt from your bank, enter the invoice number. Information about the customer is displayed. If multiple invoices are related to the payment, use the Settle open transactions form (Functions > Settlement) to select the invoices, instead. If an asterisk (*) is displayed, multiple invoices or transactions other than invoices are assigned to the payment." [ref=f3e3925]: Invoice
+                          - columnheader "Description" [ref=f3e3926]:
+                            - text: "::"
+                            - generic "Description Enter a description of the transaction. Alternatively, enter the code for the standard journal description that is created in the Journal descriptions page." [ref=f3e3929]: Description
+                          - columnheader "Debit" [ref=f3e3930]:
+                            - text: "::"
+                            - generic "Debit" [ref=f3e3933]
+                          - columnheader "Credit" [ref=f3e3934]:
+                            - text: "::"
+                            - generic "Credit Enter a credit amount in the currency that is selected for the journal line. Customer payment amounts are typically, but not always, entered in this field." [ref=f3e3937]: Credit
+                          - columnheader "Currency" [ref=f3e3938]:
+                            - text: "::"
+                            - generic "Currency" [ref=f3e3941]
+                          - columnheader "Sales order id" [ref=f3e3942]:
+                            - text: "::"
+                            - generic "Sales order id Click to follow link" [ref=f3e3945]: Sales order id
+                          - columnheader "Bank account" [ref=f3e3946]:
+                            - text: "::"
+                            - generic "Bank account Click to follow link" [ref=f3e3949]: Bank account
+                          - columnheader "Offset account type" [ref=f3e3950]:
+                            - text: "::"
+                            - generic "Offset account type Select the account type for the offset transaction to the customer payment. This is typically the Bank account type for customer payment journal lines." [ref=f3e3953]: Offset account type
+                          - columnheader "Offset account" [ref=f3e3954]:
+                            - text: "::"
+                            - generic "Offset account" [ref=f3e3957]
+                          - columnheader "Method of payment" [ref=f3e3958]:
+                            - text: "::"
+                            - generic "Method of payment Click to follow link" [ref=f3e3961]: Method of payment
+                          - columnheader "Payment status" [ref=f3e3962]:
+                            - text: "::"
+                            - 'generic "Payment status Select the payment status of the payment line: None (the status of the line at the start of the process), Sent (select when the payment or check is generated), Received (select when the bank informs you that it has received a file, if the bank has agreed to inform you about this), Approved (select when the payment is approved), Reuse (select to use the check number for the payment again; for example, if the check was damaged when printing, you can use the same check number to print a new check; (USA) this option is available only if you selected the Allow check reuse option in the Cash and bank management parameters form), or Rejected (select when the payment is rejected). Three additional statuses are also available to legal entities whose primary address is in Norway." [ref=f3e3965]': Payment status
+                          - columnheader "Demand number" [ref=f3e3966]:
+                            - text: "::"
+                            - generic "Demand number" [ref=f3e3969]
+                          - columnheader "Reference date" [ref=f3e3970]:
+                            - text: "::"
+                            - generic "Reference date" [ref=f3e3973]
+                          - columnheader "Payment reference" [ref=f3e3974]:
+                            - text: "::"
+                            - generic "Payment reference" [ref=f3e3977]
+                          - columnheader "Use a deposit slip" [ref=f3e3978]:
+                            - text: "::"
+                            - generic "Use a deposit slip" [ref=f3e3981]
+                          - columnheader "CRM transaction type" [ref=f3e3982]:
+                            - text: "::"
+                            - generic "CRM transaction type" [ref=f3e3985]
+                          - columnheader "Original Payment Voucher" [ref=f3e3986]:
+                            - text: "::"
+                            - generic "Original Payment Voucher" [ref=f3e3989]
+                          - columnheader "Reversal Payment Voucher" [ref=f3e3990]:
+                            - text: "::"
+                            - generic "Reversal Payment Voucher" [ref=f3e3993]
+                        - columnheader [ref=f3e3996]:
+                          - button "Grid options" [ref=f3e4002] [cursor=pointer]
+                    - row [ref=f3e4008]:
+                      - generic:
+                        - generic [ref=f3e4010]:
+                          - gridcell [ref=f3e4011]:
+                            - checkbox "Select or unselect row" [ref=f3e4012] [cursor=pointer]
+                          - gridcell [ref=f3e4017]:
+                            - status "The row is up to date." [ref=f3e4018]
+                        - generic [ref=f3e4022]:
+                          - gridcell [ref=f3e4023]:
+                            - generic [ref=f3e4029]:
+                              - combobox "Date" [ref=f3e4030]: 7/2/2026
+                              - button "Open" [ref=f3e4031] [cursor=pointer]
+                          - gridcell [ref=f3e4034]:
+                            - generic [ref=f3e4040]:
+                              - combobox "Value date" [ref=f3e4041]: 7/2/2026
+                              - button "Open" [ref=f3e4042] [cursor=pointer]
+                          - gridcell [ref=f3e4045]:
+                            - textbox "Voucher" [ref=f3e4052]:
+                              - /placeholder: ""
+                              - text: REL-ARBR-00000127109
+                          - gridcell [ref=f3e4053]:
+                            - generic [ref=f3e4059]:
+                              - combobox "Company" [ref=f3e4060]: rel
+                              - button "Open" [ref=f3e4061] [cursor=pointer]
+                          - gridcell [ref=f3e4064]:
+                            - generic [ref=f3e4071]:
+                              - combobox "Account" [ref=f3e4072]: REL-CST-000022359
+                              - button "Open" [ref=f3e4073] [cursor=pointer]
+                          - gridcell [ref=f3e4076]:
+                            - textbox "Account name" [ref=f3e4083]:
+                              - /placeholder: ""
+                              - text: SREEJITH KANDOTHKANDY
+                          - gridcell [ref=f3e4084]:
+                            - textbox "Payee name" [ref=f3e4091]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e4092]:
+                            - generic [ref=f3e4098]:
+                              - combobox "Invoice" [ref=f3e4099]
+                              - button "Open" [ref=f3e4100] [cursor=pointer]
+                          - gridcell [ref=f3e4103]:
+                            - generic [ref=f3e4109]:
+                              - combobox "Description" [ref=f3e4110]: "On A/C of Client Receipt of Unit : Cm-07004, CC : REL-CST-000022359, Block : Sobha Royal Pavilion Phase 1-Wing-7(T-Credited On 02-07-2026) - Wire : rwytryt BANK Axis Bank Ltd-Sobha Ltd Current A/C.925020023561885 AC IN / 925020023561885 - Dated : 02-07-2026 - Bank : Wire"
+                              - button "Open" [ref=f3e4111] [cursor=pointer]
+                          - gridcell [ref=f3e4114]:
+                            - textbox "Debit" [ref=f3e4121]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e4122]:
+                            - textbox "Credit" [ref=f3e4129]:
+                              - /placeholder: ""
+                              - text: 100,000.00
+                          - gridcell [ref=f3e4130]:
+                            - generic [ref=f3e4136]:
+                              - combobox "Currency" [ref=f3e4137]: INR
+                              - button "Open" [ref=f3e4138] [cursor=pointer]
+                          - gridcell [ref=f3e4141]:
+                            - generic [ref=f3e4147]:
+                              - combobox "Sales order id" [ref=f3e4148]: SLS-00006065
+                              - button "Open" [ref=f3e4149] [cursor=pointer]
+                          - gridcell [ref=f3e4152]:
+                            - textbox "Bank account" [disabled] [ref=f3e4159]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e4160]:
+                            - generic [ref=f3e4165]:
+                              - combobox "Offset account type" [ref=f3e4166] [cursor=pointer]: Bank
+                              - button "Open" [ref=f3e4167] [cursor=pointer]
+                          - gridcell [ref=f3e4170]:
+                            - generic [ref=f3e4177]:
+                              - combobox "Offset account" [ref=f3e4178]: KAR - 1885
+                              - button "Open" [ref=f3e4179] [cursor=pointer]
+                          - gridcell [ref=f3e4182]:
+                            - generic [ref=f3e4188]:
+                              - combobox "Method of payment" [ref=f3e4189]: Wire
+                              - button "Open" [ref=f3e4190] [cursor=pointer]
+                          - gridcell [ref=f3e4193]:
+                            - generic [ref=f3e4198]:
+                              - combobox "Payment status" [ref=f3e4199] [cursor=pointer]: None
+                              - button "Open" [ref=f3e4200] [cursor=pointer]
+                          - gridcell [ref=f3e4203]:
+                            - generic [ref=f3e4209]:
+                              - combobox "Demand number" [ref=f3e4210]
+                              - button "Open" [ref=f3e4211] [cursor=pointer]
+                          - gridcell [ref=f3e4214]:
+                            - generic [ref=f3e4220]:
+                              - combobox "Reference date" [ref=f3e4221]: 7/2/2026
+                              - button "Open" [ref=f3e4222] [cursor=pointer]
+                          - gridcell [ref=f3e4225]:
+                            - textbox "Payment reference" [ref=f3e4232]:
+                              - /placeholder: ""
+                              - text: rwytryt
+                          - gridcell [ref=f3e4233]:
+                            - checkbox "Use a deposit slip" [checked] [ref=f3e4239]:
+                              - generic "Yes" [ref=f3e4240]
+                          - gridcell [ref=f3e4245]:
+                            - generic [ref=f3e4250]:
+                              - combobox "CRM transaction type" [ref=f3e4251] [cursor=pointer]
+                              - button "Open" [ref=f3e4252] [cursor=pointer]
+                          - gridcell [ref=f3e4255]:
+                            - generic [ref=f3e4261]:
+                              - combobox "Original Payment Voucher" [ref=f3e4262]
+                              - button "Open" [ref=f3e4263] [cursor=pointer]
+                          - gridcell [ref=f3e4266]:
+                            - textbox "Reversal Payment Voucher" [ref=f3e4273]:
+                              - /placeholder: ""
+            - group "Currency" [ref=f3e4279]:
+              - group [ref=f3e4280]:
+                - generic [ref=f3e4281]: Currency
+              - generic [ref=f3e4283]: Debit
+              - generic [ref=f3e4284]: Credit
+              - generic [ref=f3e4285]: Balance
+              - group [ref=f3e4286]:
+                - generic "The voucher number for the transaction. Voucher series are set up in the Number sequences page. If the Continuous option is selected in the Number sequences page and no user changes are allowed (the To a lower number and To a higher number options are cleared), this field is skipped when you move through the fields in the page. The voucher series is selected for the journal name in the Voucher series field in the Journal names page." [ref=f3e4287]: Voucher
+                - textbox "Voucher" [active] [ref=f3e4288]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e4289]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e4290]:
+                  - /placeholder: ""
+                  - text: "0.00"
+              - group [ref=f3e4291]:
+                - generic [ref=f3e4292]: Journal
+                - textbox "Journal" [ref=f3e4293]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e4294]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e4295]:
+                  - /placeholder: ""
+                  - text: "0.00"
+            - group "Reporting currency" [ref=f3e4296]:
+              - group [ref=f3e4297]:
+                - generic [ref=f3e4298]: Reporting currency
+              - generic [ref=f3e4299]: Debit
+              - generic [ref=f3e4300]: Credit
+              - generic [ref=f3e4301]: Balance
+              - group [ref=f3e4302]:
+                - textbox "Amount in reporting currency" [ref=f3e4303]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e4304]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e4305]:
+                  - /placeholder: ""
+                  - text: "0.00"
+              - group [ref=f3e4306]:
+                - textbox "Amount in reporting currency" [ref=f3e4307]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e4308]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e4309]:
+                  - /placeholder: ""
+                  - text: "0.00"
+            - text:  

@@ -71,12 +71,23 @@ DEFAULT_BULK_UPDATE_URL = "https://uat-sobha.docuxray.ai/api/prePost/bulkUpdateR
 BULK_PASTE_BATCH_SIZE = 20
 
 try:
-    from clipboard_export import build_paste_clipboard_text, load_clipboard_col_defs, normalize_col_defs, normalize_date
+    from clipboard_export import (
+        build_paste_clipboard_text,
+        col_defs_from_live_headers,
+        load_clipboard_col_defs,
+        normalize_col_defs,
+        normalize_date,
+        validate_live_paste_columns,
+        SPACER_FIELD_KEY,
+    )
 except ImportError:
     build_paste_clipboard_text = None
+    col_defs_from_live_headers = None
     load_clipboard_col_defs = None
     normalize_col_defs = None
     normalize_date = None
+    validate_live_paste_columns = None
+    SPACER_FIELD_KEY = "__spacer__"
 
 VISUAL_ENHANCEMENT_SCRIPT = '''
 window.addEventListener('DOMContentLoaded', () => {
@@ -795,14 +806,31 @@ _ACCOUNT_CONTROL_SEL = (
     "[data-dyn-controlname='LedgerJournalTrans_AccountNum'],"
     "[data-dyn-controlname='AccountNum']"
 )
+_JOURNAL_DATA_ROW_SEL = (
+    '[role="grid"][aria-label="Journal lines"] [role="row"][id*="-row-"]'
+)
 
 
 def _journal_line_rows(page):
-    """tbody rows that contain a journal account field."""
+    """Journal data rows from the current D365 grid rendering."""
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    if rows.count():
+        return rows
     rows = page.locator("tbody tr").filter(has=page.locator(_ACCOUNT_INPUT_SEL))
     if rows.count():
         return rows
     return page.locator("tbody tr").filter(has=page.locator(_ACCOUNT_CONTROL_SEL))
+
+
+def _date_journal_line_rows(page):
+    """Journal rows addressable by Date, including inactive ARIA-grid rows."""
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    if rows.count():
+        return rows
+    rows = page.locator("tbody tr").filter(has=page.locator('input[aria-label="Date"]'))
+    if rows.count():
+        return rows
+    return page.locator("tbody tr").filter(has=page.locator('input[aria-label="Value date"]'))
 
 
 def _resolve_journal_row_index(page, row_index: int) -> int:
@@ -939,16 +967,206 @@ def _pasted_account_field_for_row(page, row_index: int):
     return None
 
 
+def _visible_journal_data_rows(page):
+    """Visible journal data rows (not limited to rows with live Account/Date inputs)."""
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    if rows.count():
+        return rows
+    return page.locator("tbody tr").filter(
+        has=page.locator('td, [role="gridcell"]')
+    )
+
+
 def _journal_line_row_at_exact(page, row_index: int):
-    rows = _journal_line_rows(page)
-    if rows.count() == 0:
-        rows = page.locator("tbody tr").filter(has=page.locator('input[aria-label="Date"]'))
-    count = rows.count()
-    if count <= row_index:
+    date_rows = _date_journal_line_rows(page)
+    date_count = date_rows.count()
+    if date_count > row_index:
+        return date_rows.nth(row_index)
+
+    account_rows = _journal_line_rows(page)
+    account_count = account_rows.count()
+    if account_count > row_index:
+        return account_rows.nth(row_index)
+
+    data_rows = _visible_journal_data_rows(page)
+    data_count = data_rows.count()
+    if data_count > row_index:
+        return data_rows.nth(row_index)
+
+    raise RuntimeError(
+        f"Journal grid has {date_count} date line(s), {account_count} account line(s), "
+        f"and {data_count} data line(s); row {row_index + 1} is not available."
+    )
+
+
+def _activate_journal_row_for_paste(page, row_index: int) -> None:
+    """Click an inactive journal row so D365 renders Date/Account inputs, then focus Date."""
+    clicked = page.evaluate(
+        """
+        (rowIndex) => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (st.visibility === 'hidden' || st.display === 'none') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            };
+
+            const dateInputSel = 'input[aria-label="Date"], input[aria-label="Value date"]';
+            const accountSel = "input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']";
+            const xpathFor = (el) => {
+                const parts = [];
+                while (el && el.nodeType === Node.ELEMENT_NODE) {
+                    const tag = el.tagName.toLowerCase();
+                    const sameTag = el.parentElement
+                        ? [...el.parentElement.children].filter((child) => child.tagName === el.tagName)
+                        : [];
+                    const suffix = sameTag.length > 1 ? `[${sameTag.indexOf(el) + 1}]` : '';
+                    parts.unshift(`${tag}${suffix}`);
+                    el = el.parentElement;
+                }
+                return `/${parts.join('/')}`;
+            };
+
+            const grid = [...document.querySelectorAll('[role="grid"]')]
+                .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
+            let trs = grid
+                ? [...grid.querySelectorAll('[role="row"][id*="-row-"]')].filter(visible)
+                : [...document.querySelectorAll('tbody tr')].filter((tr) => {
+                    if (!visible(tr) || tr.closest('thead')) return false;
+                    return tr.querySelector(dateInputSel) || tr.querySelector(accountSel)
+                        || tr.querySelector('td,[role="gridcell"]');
+                }).filter((tr) => {
+                    const cells = tr.querySelectorAll('td,[role="gridcell"]');
+                    return cells.length >= 2 || tr.querySelector(dateInputSel)
+                        || tr.querySelector(accountSel);
+                });
+
+            const rows = trs.map((tr, index) => {
+                const dateInput = tr.querySelector(dateInputSel);
+                const accountInput = tr.querySelector(accountSel);
+                return {
+                    number: index + 1,
+                    xpath: xpathFor(tr),
+                    id: tr.id || '',
+                    ariaRowIndex: tr.getAttribute('aria-rowindex') || '',
+                    selected: tr.getAttribute('aria-selected') || tr.getAttribute('aria-current') || '',
+                    date: dateInput ? (dateInput.value || dateInput.getAttribute('title') || '') : '',
+                    account: accountInput
+                        ? (accountInput.value || accountInput.getAttribute('title') || '')
+                        : '',
+                };
+            });
+            const result = (ok, via, reason = '') => ({
+                ok,
+                via,
+                reason,
+                count: trs.length,
+                target: rows[rowIndex] || null,
+                rows,
+            });
+            const row = trs[rowIndex];
+            if (!row) return result(false, '', 'row-missing');
+
+            row.scrollIntoView({ block: 'center', inline: 'nearest' });
+
+            const dateInput = row.querySelector('input[aria-label="Date"]:not([readonly])')
+                || row.querySelector('input[aria-label="Date"]')
+                || row.querySelector('input[aria-label="Value date"]');
+            if (dateInput && visible(dateInput)) {
+                dateInput.focus();
+                dateInput.click();
+                return result(true, 'date-input');
+            }
+
+            const dateCell = row.querySelector(
+                '[role="gridcell"][id$="-LedgerJournalTrans_TransDate"]'
+            );
+            if (dateCell && visible(dateCell)) {
+                dateCell.scrollIntoView({ block: 'center', inline: 'start' });
+                dateCell.click();
+                return result(true, 'date-cell');
+            }
+
+            // Click cell under Date header if present
+            const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
+            const dateHeader = headers.find((h) => {
+                const t = (h.innerText || '').trim().toLowerCase();
+                return t === 'date' || t === 'value date';
+            });
+            if (dateHeader) {
+                const headerRow = dateHeader.closest('tr,[role="row"]');
+                const colIndex = headerRow
+                    ? [...headerRow.children].indexOf(dateHeader)
+                    : -1;
+                if (colIndex >= 0 && row.children[colIndex]) {
+                    const cell = row.children[colIndex];
+                    cell.scrollIntoView({ block: 'center', inline: 'start' });
+                    cell.click();
+                    return result(true, 'date-header-cell');
+                }
+            }
+
+            const firstCell = row.querySelector('td,[role="gridcell"]');
+            if (firstCell) {
+                firstCell.scrollIntoView({ block: 'center', inline: 'start' });
+                firstCell.click();
+                return result(true, 'first-cell');
+            }
+
+            row.click();
+            return result(true, 'row-click');
+        }
+        """,
+        row_index,
+    )
+    if isinstance(clicked, dict):
+        rows = clicked.get("rows") or []
+        if row_index == 1:
+            print(f"Journal row XPath map before row 2 re-paste ({len(rows)} candidates):")
+            for row in rows:
+                print(
+                    f"  Row XPath {row.get('number')}/{len(rows)}: {row.get('xpath')} "
+                    f"| id={row.get('id') or '-'} "
+                    f"| aria-rowindex={row.get('ariaRowIndex') or '-'} "
+                    f"| selected={row.get('selected') or 'false'} "
+                    f"| Date={row.get('date') or '(blank)'} "
+                    f"| Account={row.get('account') or '(blank)'}"
+                )
+        target = clicked.get("target")
+        if target:
+            print(
+                f"Requested journal row {row_index + 1} matched XPath: {target.get('xpath')} "
+                f"| candidate {target.get('number')}/{clicked.get('count')} "
+                f"| aria-rowindex={target.get('ariaRowIndex') or '-'}"
+            )
+    if not isinstance(clicked, dict) or not clicked.get("ok"):
+        count = clicked.get("count", 0) if isinstance(clicked, dict) else 0
         raise RuntimeError(
-            f"Journal grid has {count} line(s); row {row_index + 1} is not available."
+            f"Could not activate journal row {row_index + 1} "
+            f"(visible data rows: {count})."
         )
-    return rows.nth(row_index)
+    print(
+        f"Activated journal row {row_index + 1} via {clicked.get('via')} "
+        f"({clicked.get('count')} visible rows)."
+    )
+    page.wait_for_timeout(250)
+    try:
+        _wait_for_journal_grid_ready(page, timeout_ms=8000)
+    except PlaywrightTimeoutError:
+        pass
+
+    # Prefer focusing Date after activation
+    try:
+        _focus_journal_row_at(page, row_index)
+    except RuntimeError:
+        # Row may still lack Date input; try global Date focus on selected row
+        try:
+            page.locator('input[aria-label="Date"]:not([readonly])').first.click(timeout=3000)
+            page.wait_for_timeout(100)
+            page.keyboard.press("Home")
+        except (PlaywrightError, PlaywrightTimeoutError):
+            pass
 
 
 def _journal_field_at_row(page, row_index: int, *, aria_label: str | None = None, css: str | None = None):
@@ -1176,6 +1394,241 @@ def _dismiss_d365_validation_dialog(page) -> None:
             return
         except (PlaywrightTimeoutError, PlaywrightError):
             continue
+
+
+def _read_d365_validation_issue(page) -> str | None:
+    """Return a short D365 validation/blocker message if one is visible, else None."""
+    text = page.evaluate(
+        """
+        () => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (st.display === 'none' || st.visibility === 'hidden') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            };
+
+            const blocker = /already used|cannot be saved until you fix|validation issue|payment reference id|information is not valid|fix a validation|fix it/i;
+            const linePatterns = [
+                /payment reference id .+ already used in the journal[^\\n]*/i,
+                /cannot be saved until you fix a validation issue[^\\n]*/i,
+                /already used in the journal[^\\n]*/i,
+            ];
+
+            const pickText = (raw) => {
+                const cleaned = String(raw || '').replace(/\\s+/g, ' ').trim();
+                if (!cleaned || cleaned.length < 8) return null;
+                for (const pat of linePatterns) {
+                    const m = cleaned.match(pat);
+                    if (m && m[0]) return m[0].trim();
+                }
+                if (blocker.test(cleaned)) return cleaned;
+                return null;
+            };
+
+            const seen = new Set();
+            const hits = [];
+
+            const tryPush = (raw) => {
+                const hit = pickText(raw);
+                if (!hit || seen.has(hit)) return;
+                seen.add(hit);
+                hits.push(hit);
+            };
+
+            const selectors = [
+                '[role="alert"]',
+                '[role="status"]',
+                '[role="dialog"]',
+                '.messageBar-message',
+                '.messageBar',
+                '[class*="messageBar"]',
+                '[class*="MessageBar"]',
+                '[class*="notification"]',
+                '[class*="Notification"]',
+                '[class*="infolog"]',
+                '[class*="InfoLog"]',
+                '[data-dyn-controlname*="Message"]',
+                '[id*="MessageBar"]',
+                '[id*="messageBar"]',
+                '[id*="Infolog"]',
+                '[id*="infolog"]',
+            ];
+            for (const sel of selectors) {
+                for (const el of document.querySelectorAll(sel)) {
+                    if (!visible(el)) continue;
+                    tryPush(el.innerText || el.textContent);
+                }
+            }
+
+            // Flyout / floating validation panel text
+            for (const el of document.querySelectorAll('div,span,p,a')) {
+                if (!visible(el)) continue;
+                const raw = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (!raw || raw.length < 20 || raw.length > 500) continue;
+                if (!blocker.test(raw)) continue;
+                if ((el.children || []).length > 8) continue;
+                tryPush(raw);
+                if (hits.length >= 5) break;
+            }
+
+            if (!hits.length) {
+                const bodyText = document.body ? (document.body.innerText || '') : '';
+                for (const line of bodyText.split('\\n')) {
+                    tryPush(line);
+                    if (hits.length) break;
+                }
+            }
+
+            if (!hits.length) {
+                const rowErrors = [...document.querySelectorAll('tbody tr')].filter((tr) => {
+                    if (!visible(tr)) return false;
+                    return tr.querySelector(
+                        '[class*="warning"], [class*="error"], [class*="invalid"], '
+                        + '[aria-invalid="true"], [data-dyn-invalid="true"], '
+                        + 'img[alt*="warning" i], img[alt*="error" i], '
+                        + 'span[title*="error" i], span[title*="warning" i]'
+                    );
+                });
+                if (rowErrors.length) {
+                    return 'Validation error on journal row — fix in D365 before continuing';
+                }
+            }
+
+            return hits[0] || null;
+        }
+        """
+    )
+    if not text:
+        return None
+    cleaned = " ".join(str(text).split())
+    if len(cleaned) > 160:
+        cleaned = cleaned[:157].rstrip() + "..."
+    return cleaned or None
+
+
+def _wait_until_issue_resolved(page, issue_name: str) -> None:
+    """Block until user clicks Yes on 'is it resolved?'. No re-shows the gate."""
+    label = (issue_name or "").strip() or "Validation issue"
+    print(f"Waiting for user to resolve issue: {label}")
+    while True:
+        page.evaluate(
+            """
+            (issueName) => {
+                window.automationIssueResolved = null;
+                const old = document.getElementById('automation-issue-resolved-gate');
+                if (old) old.remove();
+
+                const wrap = document.createElement('div');
+                wrap.id = 'automation-issue-resolved-gate';
+                wrap.setAttribute('role', 'dialog');
+                Object.assign(wrap.style, {
+                    position: 'fixed',
+                    right: '24px',
+                    bottom: '24px',
+                    zIndex: '2147483647',
+                    width: 'min(420px, calc(100vw - 24px))',
+                    boxSizing: 'border-box',
+                    padding: '14px',
+                    background: 'rgba(255,255,255,0.98)',
+                    border: '1px solid rgba(17,24,39,0.16)',
+                    borderRadius: '14px',
+                    boxShadow: '0 18px 50px rgba(0,0,0,0.22)',
+                    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+                    color: '#0f172a'
+                });
+
+                const title = document.createElement('div');
+                title.textContent = issueName;
+                Object.assign(title.style, {
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    lineHeight: '1.35',
+                    wordBreak: 'break-word'
+                });
+                wrap.appendChild(title);
+
+                const q = document.createElement('div');
+                q.textContent = 'Is it resolved?';
+                Object.assign(q.style, {
+                    marginTop: '8px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    lineHeight: '1.35'
+                });
+                wrap.appendChild(q);
+
+                const actions = document.createElement('div');
+                Object.assign(actions.style, {
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    gap: '10px',
+                    marginTop: '12px'
+                });
+
+                const noBtn = document.createElement('button');
+                noBtn.type = 'button';
+                noBtn.textContent = 'No';
+                Object.assign(noBtn.style, {
+                    padding: '9px 14px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(17,24,39,0.12)',
+                    background: '#f8fafc',
+                    color: '#0f172a',
+                    fontWeight: '800',
+                    fontSize: '13px',
+                    cursor: 'pointer'
+                });
+                noBtn.onclick = () => {
+                    window.automationIssueResolved = 'no';
+                    wrap.remove();
+                };
+
+                const yesBtn = document.createElement('button');
+                yesBtn.type = 'button';
+                yesBtn.textContent = 'Yes';
+                Object.assign(yesBtn.style, {
+                    padding: '9px 14px',
+                    borderRadius: '12px',
+                    border: '0',
+                    background: '#16a34a',
+                    color: '#fff',
+                    fontWeight: '800',
+                    fontSize: '13px',
+                    cursor: 'pointer'
+                });
+                yesBtn.onclick = () => {
+                    window.automationIssueResolved = 'yes';
+                    wrap.remove();
+                };
+
+                actions.appendChild(noBtn);
+                actions.appendChild(yesBtn);
+                wrap.appendChild(actions);
+                document.body.appendChild(wrap);
+            }
+            """,
+            label,
+        )
+        page.wait_for_function("window.automationIssueResolved !== null", timeout=0)
+        decision = page.evaluate("window.automationIssueResolved")
+        if decision == "yes":
+            print(f"User confirmed issue resolved: {label}")
+            return
+        print(f"User clicked No — still waiting for resolution: {label}")
+        page.wait_for_timeout(400)
+        refreshed = _read_d365_validation_issue(page)
+        if refreshed:
+            label = refreshed
+
+
+def _gate_if_validation_issue(page) -> None:
+    """If a D365 validation blocker is visible, wait until the user confirms Yes."""
+    issue = _read_d365_validation_issue(page)
+    if issue:
+        print(f"D365 validation issue detected — showing resolution gate: {issue}")
+        _wait_until_issue_resolved(page, issue)
 
 
 def _finalize_journal_line_before_new(
@@ -1994,14 +2447,75 @@ def _type_pasted_account(page, record, row_index: int) -> bool:
     return False
 
 
-def _repaste_pasted_row(page, record, row_index: int, col_defs) -> None:
-    _focus_journal_row_at(page, row_index)
-    _set_page_clipboard(page, build_paste_clipboard_text([record], col_defs))
+def _read_journal_grid_headers(page) -> list[str]:
+    """Return visible journal line column headers left-to-right from the live D365 grid."""
+    headers = page.evaluate(
+        """
+        () => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                if (st.visibility === 'hidden' || st.display === 'none') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            };
+
+            const dateInput = document.querySelector(
+                'tbody tr input[aria-label="Date"], tbody tr input[aria-label="Value date"]'
+            );
+            let scope = dateInput ? dateInput.closest('table') : null;
+            if (!scope) {
+                const tbody = document.querySelector('tbody');
+                scope = tbody ? tbody.closest('table') : null;
+            }
+            if (!scope) {
+                scope = document;
+            }
+
+            const headerCells = [...scope.querySelectorAll('thead th, thead [role="columnheader"]')]
+                .filter(visible);
+            if (headerCells.length) {
+                return headerCells
+                    .map((cell) => (cell.innerText || cell.textContent || '').trim())
+                    .filter(Boolean);
+            }
+
+            const headerRow = [...scope.querySelectorAll('tr,[role="row"]')].find((row) => {
+                if (!visible(row)) return false;
+                return row.querySelector('[role="columnheader"], th');
+            });
+            if (!headerRow) {
+                return [...document.querySelectorAll('th,[role="columnheader"]')]
+                    .filter(visible)
+                    .map((cell) => (cell.innerText || cell.textContent || '').trim())
+                    .filter(Boolean);
+            }
+
+            return [...headerRow.children]
+                .filter(visible)
+                .map((cell) => (cell.innerText || cell.textContent || '').trim())
+                .filter(Boolean);
+        }
+        """
+    )
+    result = [str(h).strip() for h in (headers or []) if str(h).strip()]
+    print(f"Detected D365 journal columns ({len(result)}): {result}")
+    return result
+
+
+def _repaste_pasted_row(page, record, row_index: int, col_defs, *, use_live_order: bool = False) -> None:
+    _activate_journal_row_for_paste(page, row_index)
+    page.wait_for_timeout(200)
+    _set_page_clipboard(
+        page,
+        build_paste_clipboard_text([record], col_defs, use_live_order=use_live_order),
+    )
     page.keyboard.press("ControlOrMeta+v")
     page.wait_for_timeout(400)
-    expected = str(record["account"]).strip()
-    _wait_for_account_lookup(page, row_index, expected, timeout_ms=8000)
-    print(f"Row {row_index + 1}: re-pasted for Account lookup resolution.")
+    expected = str(record.get("account", "")).strip()
+    if expected:
+        _wait_for_account_lookup(page, row_index, expected, timeout_ms=8000)
+    print(f"Row {row_index + 1}: pasted single row only.")
 
 
 def _read_pasted_account(account_field) -> str:
@@ -2045,7 +2559,7 @@ def _account_matches(actual: str, expected: str) -> bool:
     return bool(expected_key) and expected_key in strip(actual)
 
 
-def _repair_missing_pasted_accounts(page, records, col_defs) -> int:
+def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: bool = False) -> int:
     missing_source_rows = [
         str(index)
         for index, record in enumerate(records, start=1)
@@ -2088,7 +2602,7 @@ def _repair_missing_pasted_accounts(page, records, col_defs) -> int:
         # Dismiss validation dialogs before re-paste attempt
         _dismiss_d365_validation_dialog(page)
         _wait_for_journal_grid_idle(page)
-        _repaste_pasted_row(page, record, index, col_defs)
+        _repaste_pasted_row(page, record, index, col_defs, use_live_order=use_live_order)
 
         # Save after re-paste so D365 commits the lookup
         _wait_for_journal_grid_idle(page)
@@ -2281,9 +2795,26 @@ def _repair_missing_pasted_method_of_payment(page, records) -> int:
 
 
 def _paste_bulk_chunk(page, records, col_defs) -> None:
-    if build_paste_clipboard_text is None:
+    if build_paste_clipboard_text is None or col_defs_from_live_headers is None:
         raise RuntimeError("clipboard_export module is not available.")
-    paste_text = build_paste_clipboard_text(records, col_defs)
+
+    live_headers = _read_journal_grid_headers(page)
+    if not live_headers:
+        raise RuntimeError(
+            "Could not read D365 journal column headers. "
+            "Ensure journal lines grid is visible before bulk paste."
+        )
+
+    ordered_cols = col_defs_from_live_headers(live_headers, col_defs)
+    validate_live_paste_columns(ordered_cols)
+    mapped_labels = [
+        col.get("label", "")
+        for col in ordered_cols
+        if col.get("key") and col.get("key") != SPACER_FIELD_KEY
+    ]
+    print(f"Bulk paste column map ({len(ordered_cols)} cols): {mapped_labels}")
+
+    paste_text = build_paste_clipboard_text(records, ordered_cols, use_live_order=True)
     col_count = paste_text.split("\r\n")[0].count("\t") + 1 if paste_text else 0
     print(f"Bulk paste: {len(records)} rows x {col_count} columns (starting at Date column).")
     _focus_journal_row_for_paste(page, 0)
@@ -2291,14 +2822,44 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     page.keyboard.press("ControlOrMeta+v")
     page.wait_for_timeout(400)
 
-    _save_journal_grid(page, "after paste")
-    print(f"Bulk paste applied for {len(records)} rows; checking Account fields.")
+    _wait_for_journal_grid_idle(page)
+    _dismiss_d365_validation_dialog(page)
+    _gate_if_validation_issue(page)
+    if not _confirm_unsaved_changes_dialog(page, wait_ms=2000):
+        _save_journal_grid(page, "after bulk paste")
+    else:
+        print("Confirmed save-changes prompt after bulk paste.")
+    _wait_for_journal_grid_idle(page)
+    try:
+        _wait_for_journal_grid_ready(page, timeout_ms=15000)
+    except PlaywrightTimeoutError:
+        print("Warning: Journal grid not fully ready before row re-paste; continuing.")
+
+    _gate_if_validation_issue(page)
+    print(f"Bulk paste applied for {len(records)} rows; re-pasting rows 2..{len(records)} one at a time.")
+
+    for index in range(1, len(records)):
+        _gate_if_validation_issue(page)
+        print(f"Row {index + 1}/{len(records)}: single-row paste only.")
+        _repaste_pasted_row(page, records[index], index, ordered_cols, use_live_order=True)
+        _wait_for_journal_grid_idle(page)
+        _dismiss_d365_validation_dialog(page)
+        _gate_if_validation_issue(page)
+        if not _confirm_unsaved_changes_dialog(page, wait_ms=2000):
+            _save_journal_grid(page, f"after row {index + 1} re-paste")
+        _wait_for_journal_grid_idle(page)
+        if index < len(records) - 1:
+            _gate_if_validation_issue(page)
+
+    _gate_if_validation_issue(page)
+
+    print("Checking Account and Method of payment fields after paste.")
     _wait_for_journal_grid_idle(page)
     try:
         _wait_for_journal_grid_ready(page, timeout_ms=10000)
     except PlaywrightTimeoutError:
         pass
-    _repair_missing_pasted_accounts(page, records, col_defs)
+    _repair_missing_pasted_accounts(page, records, ordered_cols, use_live_order=True)
     _repair_missing_pasted_method_of_payment(page, records)
 
 
@@ -2853,6 +3414,8 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
     with sync_playwright() as playwright:
         browser = None
         context = None
+        page = None
+        automation_error = None
         try:
             browser, screen_w, screen_h = _create_browser(playwright)
             try:
@@ -2939,21 +3502,44 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                     _refresh_for_next_batch(page)
 
             _persist_storage_state(context)
+        except Exception as err:
+            automation_error = err
+            print(f"Automation failed: {err}")
+            if keep_browser_open and browser is not None:
+                print("Automation failed — browser left open for inspection. Close it when done.")
+                try:
+                    while browser.is_connected():
+                        if page is not None:
+                            page.wait_for_timeout(1000)
+                        else:
+                            time.sleep(1)
+                except Exception:
+                    pass
+        else:
             if keep_browser_open and browser is not None:
                 print("Waiting for user to close the browser...")
                 try:
                     while browser.is_connected():
-                        page.wait_for_timeout(1000)
+                        if page is not None:
+                            page.wait_for_timeout(1000)
+                        else:
+                            time.sleep(1)
                 except Exception:
                     pass
         finally:
             if keep_browser_open:
-                print("Bulk paste completed — browser closed by user.")
+                if automation_error is not None:
+                    print("Browser closed after automation failure.")
+                else:
+                    print("Bulk paste completed — browser closed by user.")
             else:
                 if context is not None:
                     context.close()
                 if browser is not None:
                     browser.close()
+
+        if automation_error is not None:
+            raise automation_error
 
 def test_loginfunctionality():
     issues = get_config_issues(require_auth_state=False)

@@ -1,0 +1,26 @@
+- generic [ref=f1e5]:
+  - img "Organisation background image" [ref=f1e6]
+  - generic [ref=f1e7]:
+    - generic [ref=f1e12]:
+      - generic [ref=f1e13]:
+        - img "Microsoft" [ref=f1e16]
+        - main [ref=f1e17]:
+          - generic [ref=f1e20]:
+            - heading "Sign in" [level=1] [ref=f1e24]
+            - generic [ref=f1e25]:
+              - alert
+              - generic [ref=f1e27]:
+                - textbox "Enter your email, phone, or Skype." [active] [ref=f1e28]:
+                  - /placeholder: Email, phone, or Skype
+                - textbox [ref=f1e29]
+            - link "Can’t access your account?" [ref=f1e35] [cursor=pointer]:
+              - /url: "#"
+            - button "Next" [ref=f1e38] [cursor=pointer]
+      - button "Sign-in options" [ref=f1e44] [cursor=pointer]
+    - contentinfo [ref=f1e49]:
+      - generic [ref=f1e50]:
+        - link "Terms of use" [ref=f1e51] [cursor=pointer]:
+          - /url: https://www.microsoft.com/en-GB/servicesagreement/
+        - link "Privacy & cookies" [ref=f1e52] [cursor=pointer]:
+          - /url: https://privacy.microsoft.com/en-GB/privacystatement
+        - button "Click here for troubleshooting information" [ref=f1e53] [cursor=pointer]: ...
