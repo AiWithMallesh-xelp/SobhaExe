@@ -1,0 +1,221 @@
+- generic [ref=f3e1]:
+  - alert [ref=f3e2]: Please wait. We're processing your request.
+  - banner "Navigation bar" [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - link "Office 365" [ref=f3e5] [cursor=pointer]:
+        - generic [ref=f3e6]: 
+      - button "Finance and Operations" [ref=f3e8] [cursor=pointer]:
+        - generic [ref=f3e9]:
+          - text: 
+          - generic [ref=f3e10]: Finance and Operations
+    - list [ref=f3e11]
+    - button "Current company is rel, activate to choose a company" [ref=f3e13] [cursor=pointer]: REL
+    - generic [ref=f3e14]:
+      - list [ref=f3e15]:
+        - listitem [ref=f3e16]:
+          - button "Copilot" [ref=f3e17] [cursor=pointer]:
+            - img "Image NavBarActions_SysCopilotChatPanel" [ref=f3e20]
+      - button "Search" [ref=f3e22] [cursor=pointer]:
+        - generic [ref=f3e23]: 
+      - button "Show messages (Ctrl+Shift+F7) Open to view system messages." [ref=f3e26] [cursor=pointer]: 
+      - button "Feedback" [ref=f3e27] [cursor=pointer]:
+        - generic [ref=f3e28]: 
+      - generic [ref=f3e31] [cursor=pointer]:
+        - button "Settings" [ref=f3e32]:
+          - generic [ref=f3e33]:
+            - generic [ref=f3e34]: 
+            - text: 
+        - text:   
+      - generic [ref=f3e35] [cursor=pointer]:
+        - button "Help & Support" [ref=f3e36]:
+          - generic [ref=f3e37]:
+            - generic [ref=f3e38]: 
+            - text: 
+        - text:    
+      - text:  
+      - button "D3" [ref=f3e40] [cursor=pointer]
+  - navigation "Navigation menu" [ref=f3e43]:
+    - button "Expand the navigation pane" [ref=f3e44] [cursor=pointer]: 
+    - tree [ref=f3e45]:
+      - treeitem "Home" [level=1] [ref=f3e46] [cursor=pointer]:
+        - generic [ref=f3e47]: 
+      - treeitem "Favorites" [level=1] [ref=f3e48] [cursor=pointer]:
+        - generic [ref=f3e49]: 
+      - treeitem "Recent" [level=1] [ref=f3e50] [cursor=pointer]:
+        - generic [ref=f3e51]: 
+      - treeitem "Workspaces" [level=1] [ref=f3e52] [cursor=pointer]:
+        - generic [ref=f3e53]: 
+      - treeitem "Modules" [level=1] [ref=f3e54] [cursor=pointer]:
+        - generic [ref=f3e55]: 
+  - main [ref=f3e56]:
+    - text: "                           |      ::  :: :: ::  :: :: :: :: :: :: :: :: :: ::  "
+    - 'form "Customer payments: REL-009495 : ARBR" [ref=f3e3760]':
+      - toolbar [ref=f3e3761]:
+        - button "Back" [ref=f3e3762] [cursor=pointer]:
+          - generic [ref=f3e3763]: 
+        - button " Save" [ref=f3e3765] [cursor=pointer]:
+          - generic [ref=f3e3766]:
+            - generic [ref=f3e3767]: 
+            - generic [ref=f3e3768]: Save
+        - button "Post" [ref=f3e3769] [cursor=pointer]:
+          - generic [ref=f3e3770]:  Post
+        - button "Post in batch" [ref=f3e3771] [cursor=pointer]:
+          - generic [ref=f3e3772]:  Post in batch
+        - button "Validate" [ref=f3e3774] [cursor=pointer]:
+          - generic [ref=f3e3775]:  Validate
+        - button "Period journal" [ref=f3e3776] [cursor=pointer]:
+          - generic [ref=f3e3777]:  Period journal
+        - button "Payment proposal" [ref=f3e3779] [cursor=pointer]:
+          - generic [ref=f3e3780]:  Payment proposal
+        - button "Functions" [ref=f3e3782] [cursor=pointer]:
+          - generic [ref=f3e3783]:  Functions
+        - button "Inquiries" [ref=f3e3785] [cursor=pointer]:
+          - generic [ref=f3e3786]:  Inquiries
+        - button "Print" [ref=f3e3788] [cursor=pointer]:
+          - generic [ref=f3e3789]:  Print
+        - button "Customer Receipt" [ref=f3e3791] [cursor=pointer]:
+          - generic [ref=f3e3792]:  Customer Receipt
+        - button "Options" [ref=f3e3794] [cursor=pointer]
+        - button "Search for an action" [ref=f3e3796] [cursor=pointer]: 
+        - text: 
+        - button "Power Apps" [ref=f3e3798] [cursor=pointer]:
+          - generic [ref=f3e3799]:
+            - generic [ref=f3e3800]: 
+            - text: 
+        - button "Open in Microsoft Office" [ref=f3e3802] [cursor=pointer]:
+          - generic [ref=f3e3803]:
+            - generic [ref=f3e3804]: 
+            - text: 
+        - button "Attachments (0)" [ref=f3e3805] [cursor=pointer]:
+          - generic [ref=f3e3806]:
+            - generic [ref=f3e3807]: 
+            - generic [ref=f3e3808]: "0"
+        - button "Refresh" [ref=f3e3809] [cursor=pointer]:
+          - generic [ref=f3e3810]: 
+        - button "Open in new window" [ref=f3e3812] [cursor=pointer]:
+          - generic [ref=f3e3813]: 
+      - button "Show filters" [ref=f3e3815] [cursor=pointer]:
+        - generic [ref=f3e3816]: 
+      - 'region "Customer payments: REL-009495 : ARBR" [ref=f3e3818]':
+        - generic [ref=f3e3820]:
+          - heading [level=1] [ref=f3e3822]:
+            - text: "Customer payments|REL-009495 : ARBR"
+            - button "Standard view" [ref=f3e3823] [cursor=pointer]:
+              - generic [ref=f3e3824]:  Standard view
+          - generic [ref=f3e3825]:
+            - tablist [ref=f3e3826]:
+              - tab "List" [selected] [ref=f3e3827] [cursor=pointer]
+              - tab "General" [ref=f3e3828] [cursor=pointer]
+              - tab "Payment fee" [ref=f3e3829] [cursor=pointer]
+              - tab "Bank" [ref=f3e3830] [cursor=pointer]
+              - tab "History" [ref=f3e3831] [cursor=pointer]
+              - tab "Payment" [ref=f3e3832] [cursor=pointer]
+              - tab "Postdated checks" [ref=f3e3833] [cursor=pointer]
+            - text:  
+            - tabpanel "List" [ref=f3e3834]:
+              - generic [ref=f3e3835]:
+                - toolbar [ref=f3e3836]:
+                  - group [ref=f3e3837]:
+                    - button " New" [ref=f3e3838] [cursor=pointer]:
+                      - generic [ref=f3e3839]:
+                        - generic [ref=f3e3840]: 
+                        - generic [ref=f3e3841]: New
+                    - button " Delete" [ref=f3e3842] [cursor=pointer]:
+                      - generic [ref=f3e3843]:
+                        - generic [ref=f3e3844]: 
+                        - generic [ref=f3e3845]: Delete
+                  - group [ref=f3e3846]:
+                    - button "Settle transactions" [ref=f3e3847] [cursor=pointer]:
+                      - generic [ref=f3e3848]:
+                        - text: 
+                        - generic [ref=f3e3849]: Settle transactions
+                    - button "Financial dimensions" [ref=f3e3851] [cursor=pointer]:
+                      - generic [ref=f3e3852]:
+                        - text: 
+                        - generic [ref=f3e3853]: Financial dimensions
+                    - button "Tax document" [ref=f3e3854] [cursor=pointer]:
+                      - generic [ref=f3e3855]:
+                        - text: 
+                        - generic [ref=f3e3856]: Tax document
+                    - button "Payment status" [ref=f3e3858] [cursor=pointer]:
+                      - generic [ref=f3e3859]:
+                        - text: 
+                        - generic [ref=f3e3860]: Payment status
+                    - button "View marked transactions" [ref=f3e3861] [cursor=pointer]:
+                      - generic [ref=f3e3862]:
+                        - text: 
+                        - generic [ref=f3e3863]: View marked transactions
+                    - button "Tax information" [ref=f3e3864] [cursor=pointer]:
+                      - generic [ref=f3e3865]:
+                        - text: 
+                        - generic [ref=f3e3866]: Tax information
+                  - text: 
+                - generic [ref=f3e3869]:
+                  - grid "Journal lines" [ref=f3e3870]:
+                    - row [ref=f3e3873]:
+                      - generic:
+                        - generic [ref=f3e3875]:
+                          - columnheader [ref=f3e3876]:
+                            - checkbox "Select or unselect all rows" [ref=f3e3877] [cursor=pointer]
+                          - columnheader [ref=f3e3884]:
+                            - status "Indicates the current status of the row, in particular if the row is up-to-date, has unsaved changes, has a validation issue, or is waiting for user input." [ref=f3e3885]
+                        - columnheader [ref=f3e3895]:
+                          - button "Grid options" [ref=f3e3901] [cursor=pointer]
+                  - generic "Loading data":
+                    - generic:
+                      - img "Loading data No image"
+            - group "Currency" [ref=f3e3905]:
+              - group [ref=f3e3906]:
+                - generic [ref=f3e3907]: Currency
+              - generic [ref=f3e3909]: Debit
+              - generic [ref=f3e3910]: Credit
+              - generic [ref=f3e3911]: Balance
+              - group [ref=f3e3912]:
+                - generic "The voucher number for the transaction. Voucher series are set up in the Number sequences page. If the Continuous option is selected in the Number sequences page and no user changes are allowed (the To a lower number and To a higher number options are cleared), this field is skipped when you move through the fields in the page. The voucher series is selected for the journal name in the Voucher series field in the Journal names page." [ref=f3e3913]: Voucher
+                - textbox "Voucher" [active] [ref=f3e3914]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e3915]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e3916]:
+                  - /placeholder: ""
+                  - text: "0.00"
+              - group [ref=f3e3917]:
+                - generic [ref=f3e3918]: Journal
+                - textbox "Journal" [ref=f3e3919]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e3920]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount" [ref=f3e3921]:
+                  - /placeholder: ""
+                  - text: "0.00"
+            - group "Reporting currency" [ref=f3e3922]:
+              - group [ref=f3e3923]:
+                - generic [ref=f3e3924]: Reporting currency
+              - generic [ref=f3e3925]: Debit
+              - generic [ref=f3e3926]: Credit
+              - generic [ref=f3e3927]: Balance
+              - group [ref=f3e3928]:
+                - textbox "Amount in reporting currency" [ref=f3e3929]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e3930]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e3931]:
+                  - /placeholder: ""
+                  - text: "0.00"
+              - group [ref=f3e3932]:
+                - textbox "Amount in reporting currency" [ref=f3e3933]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e3934]:
+                  - /placeholder: ""
+                  - text: 100,000.00
+                - textbox "Amount in reporting currency" [ref=f3e3935]:
+                  - /placeholder: ""
+                  - text: "0.00"
+            - text:  

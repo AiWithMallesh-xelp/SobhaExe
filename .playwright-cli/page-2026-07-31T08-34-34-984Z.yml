@@ -1,0 +1,1210 @@
+- generic [ref=f3e1]:
+  - alert [ref=f3e2]
+  - banner "Navigation bar" [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - link "Office 365" [ref=f3e5] [cursor=pointer]:
+        - generic [ref=f3e6]: 
+      - button "Finance and Operations" [ref=f3e8] [cursor=pointer]:
+        - generic [ref=f3e9]:
+          - text: 
+          - generic [ref=f3e10]: Finance and Operations
+    - list [ref=f3e11]
+    - button "Current company is rel, activate to choose a company" [ref=f3e13] [cursor=pointer]: REL
+    - generic [ref=f3e14]:
+      - list [ref=f3e15]:
+        - listitem [ref=f3e16]:
+          - button "Copilot" [ref=f3e17] [cursor=pointer]:
+            - img "Image NavBarActions_SysCopilotChatPanel" [ref=f3e20]
+      - button "Search" [ref=f3e22] [cursor=pointer]:
+        - generic [ref=f3e23]: 
+      - button "Show messages (Ctrl+Shift+F7) Open to view system messages." [ref=f3e26] [cursor=pointer]: 
+      - button "Feedback" [ref=f3e27] [cursor=pointer]:
+        - generic [ref=f3e28]: 
+      - generic [ref=f3e31] [cursor=pointer]:
+        - button "Settings" [ref=f3e32]:
+          - generic [ref=f3e33]:
+            - generic [ref=f3e34]: 
+            - text: 
+        - text:   
+      - generic [ref=f3e35] [cursor=pointer]:
+        - button "Help & Support" [ref=f3e36]:
+          - generic [ref=f3e37]:
+            - generic [ref=f3e38]: 
+            - text: 
+        - text:    
+      - text:  
+      - button "D3" [ref=f3e40] [cursor=pointer]
+  - navigation "Navigation menu" [ref=f3e43]:
+    - button "Expand the navigation pane" [ref=f3e44] [cursor=pointer]: 
+    - tree [ref=f3e45]:
+      - treeitem "Home" [level=1] [ref=f3e46] [cursor=pointer]:
+        - generic [ref=f3e47]: 
+      - treeitem "Favorites" [level=1] [ref=f3e48] [cursor=pointer]:
+        - generic [ref=f3e49]: 
+      - treeitem "Recent" [level=1] [ref=f3e50] [cursor=pointer]:
+        - generic [ref=f3e51]: 
+      - treeitem "Workspaces" [level=1] [ref=f3e52] [cursor=pointer]:
+        - generic [ref=f3e53]: 
+      - treeitem "Modules" [level=1] [ref=f3e54] [cursor=pointer]:
+        - generic [ref=f3e55]: 
+  - main [ref=f3e56]:
+    - form "Customer payment journal:" [ref=f3e57]:
+      - toolbar [ref=f3e58]:
+        - button "Back" [ref=f3e59] [cursor=pointer]:
+          - generic [ref=f3e60]: 
+        - button " Save" [ref=f3e62] [cursor=pointer]:
+          - generic [ref=f3e63]:
+            - generic [ref=f3e64]: 
+            - generic [ref=f3e65]: Save
+        - button " New" [ref=f3e66] [cursor=pointer]:
+          - generic [ref=f3e67]:
+            - generic [ref=f3e68]: 
+            - generic [ref=f3e69]: New
+        - button " Delete" [ref=f3e70] [cursor=pointer]:
+          - generic [ref=f3e71]:
+            - generic [ref=f3e72]: 
+            - generic [ref=f3e73]: Delete
+        - button "Enter customer payments" [ref=f3e74] [cursor=pointer]:
+          - generic [ref=f3e75]:  Enter customer payments
+        - button "Lines" [ref=f3e76] [cursor=pointer]:
+          - generic [ref=f3e77]:  Lines
+        - button "Open lines in Excel" [ref=f3e78] [cursor=pointer]:
+          - generic [ref=f3e79]:  Open lines in Excel
+        - button "Validate" [ref=f3e81] [cursor=pointer]:
+          - generic [ref=f3e82]:  Validate
+        - button "Post" [ref=f3e84] [cursor=pointer]:
+          - generic [ref=f3e85]:  Post
+        - button "Approval" [disabled] [ref=f3e87]:
+          - generic [ref=f3e88]:  Approval
+        - button "Upload journal" [ref=f3e89] [cursor=pointer]:
+          - generic [ref=f3e90]:  Upload journal
+        - button "Search for an action" [ref=f3e92] [cursor=pointer]: 
+        - button "More" [ref=f3e93]:   
+        - button "Power Apps" [ref=f3e95] [cursor=pointer]:
+          - generic [ref=f3e96]:
+            - generic [ref=f3e97]: 
+            - text: 
+        - button "Open in Microsoft Office" [ref=f3e99] [cursor=pointer]:
+          - generic [ref=f3e100]:
+            - generic [ref=f3e101]: 
+            - text: 
+        - button "Attachments (0)" [ref=f3e102] [cursor=pointer]:
+          - generic [ref=f3e103]:
+            - generic [ref=f3e104]: 
+            - generic [ref=f3e105]: "0"
+        - button "Refresh" [ref=f3e106] [cursor=pointer]:
+          - generic [ref=f3e107]: 
+        - button "Open in new window" [disabled] [ref=f3e109]:
+          - generic [ref=f3e110]: 
+      - button "Show filters" [ref=f3e112] [cursor=pointer]:
+        - generic [ref=f3e113]: 
+      - region "Customer payment journal:" [ref=f3e115]:
+        - generic [ref=f3e117]:
+          - heading [level=1] [ref=f3e119]:
+            - text: Customer payment journal |
+            - button "Standard view" [ref=f3e120] [cursor=pointer]:
+              - generic [ref=f3e121]:  Standard view
+          - generic [ref=f3e122]:
+            - generic [ref=f3e123]: Show
+            - generic [ref=f3e124]:
+              - combobox "Show" [ref=f3e125]: Not posted
+              - generic [ref=f3e126] [cursor=pointer]: 
+            - generic [ref=f3e127]:
+              - checkbox "Show user-created only" [ref=f3e128] [cursor=pointer]
+              - generic [ref=f3e129] [cursor=pointer]: Show user-created only
+            - tablist [ref=f3e130]:
+              - tab "List" [selected] [ref=f3e131] [cursor=pointer]
+              - tab "General" [ref=f3e132] [cursor=pointer]
+              - tab "Setup" [ref=f3e133] [cursor=pointer]
+              - tab "Blocking" [ref=f3e134] [cursor=pointer]
+              - tab "Financial dimensions" [ref=f3e135] [cursor=pointer]
+              - tab "History" [ref=f3e136] [cursor=pointer]
+            - text:  
+            - tabpanel "List" [ref=f3e137]:
+              - grid "Ledger journal table" [ref=f3e142]:
+                - generic [ref=f3e143]:
+                  - row [ref=f3e145]:
+                    - generic:
+                      - generic [ref=f3e147]:
+                        - columnheader [ref=f3e148]:
+                          - checkbox "Select or unselect all rows" [ref=f3e149] [cursor=pointer]
+                        - columnheader [ref=f3e156]:
+                          - status "Indicates the current status of the row, in particular if the row is up-to-date, has unsaved changes, has a validation issue, or is waiting for user input." [ref=f3e157]
+                      - generic [ref=f3e165]:
+                        - columnheader "Journal batch number " [ref=f3e166]:
+                          - text: "::"
+                          - generic [ref=f3e168]:
+                            - generic "Journal batch number Click to follow link" [ref=f3e169]: Journal batch number
+                            - text: 
+                        - columnheader "Name" [ref=f3e170]:
+                          - text: "::"
+                          - generic "Name" [ref=f3e173]
+                        - columnheader "Description" [ref=f3e174]:
+                          - text: "::"
+                          - generic "Description" [ref=f3e177]
+                        - columnheader "Posted " [ref=f3e178]:
+                          - text: "::"
+                          - generic [ref=f3e180]:
+                            - generic "Posted" [ref=f3e181]
+                            - text: 
+                        - columnheader "Posted on" [ref=f3e182]:
+                          - text: "::"
+                          - generic "Posted on" [ref=f3e185]
+                        - columnheader "Log" [ref=f3e186]:
+                          - text: "::"
+                          - generic "Log" [ref=f3e189]
+                        - columnheader "In use" [ref=f3e190]:
+                          - text: "::"
+                          - generic "In use" [ref=f3e193]
+                        - columnheader "In use by" [ref=f3e194]:
+                          - text: "::"
+                          - generic "In use by ID for the user" [ref=f3e197]: In use by
+                        - columnheader "Modified by" [ref=f3e198]:
+                          - text: "::"
+                          - generic "Modified by" [ref=f3e201]
+                        - columnheader "Modified by" [ref=f3e202]:
+                          - text: "::"
+                          - generic "Modified by" [ref=f3e205]
+                        - columnheader "Rejected by" [ref=f3e206]:
+                          - text: "::"
+                          - generic "Rejected by ID for the user" [ref=f3e209]: Rejected by
+                        - columnheader "External receipt number" [ref=f3e210]:
+                          - text: "::"
+                          - generic "External receipt number" [ref=f3e213]
+                        - columnheader "Payment Sent" [ref=f3e214]:
+                          - text: "::"
+                          - generic "Payment Sent" [ref=f3e217]
+                        - columnheader "Workflow Status" [ref=f3e218]:
+                          - text: "::"
+                          - generic "Workflow Status" [ref=f3e221]
+                      - columnheader [ref=f3e224]:
+                        - button "Grid options" [ref=f3e230] [cursor=pointer]
+                  - generic:
+                    - row [ref=f3e236]:
+                      - generic:
+                        - generic [ref=f3e238]:
+                          - gridcell [ref=f3e239]:
+                            - checkbox "Select or unselect row" [ref=f3e240] [cursor=pointer]
+                          - gridcell [ref=f3e245]:
+                            - status "The row is up to date." [ref=f3e246]
+                        - generic [ref=f3e250]:
+                          - gridcell [ref=f3e251]:
+                            - textbox "Journal batch number" [ref=f3e258] [cursor=pointer]:
+                              - /placeholder: ""
+                              - text: REL-009495
+                          - gridcell [ref=f3e259]:
+                            - textbox "Name" [ref=f3e266]:
+                              - /placeholder: ""
+                              - text: ARBR
+                          - gridcell [ref=f3e267]:
+                            - textbox "Description" [active] [ref=f3e274]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e275]:
+                            - checkbox "Posted" [ref=f3e281]:
+                              - generic "No" [ref=f3e282]
+                          - gridcell [ref=f3e286]:
+                            - textbox "Posted on" [ref=f3e293]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e294]:
+                            - checkbox "Log" [checked] [ref=f3e300]:
+                              - generic "Yes" [ref=f3e301]
+                          - gridcell [ref=f3e306]:
+                            - img "In use No image" [ref=f3e312]
+                          - gridcell [ref=f3e314]:
+                            - textbox "In use by" [ref=f3e321]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e322]:
+                            - textbox "Modified by" [ref=f3e329]:
+                              - /placeholder: ""
+                              - text: "27400"
+                          - gridcell [ref=f3e330]:
+                            - textbox "Modified by" [ref=f3e337]:
+                              - /placeholder: ""
+                              - text: Plaban Kar
+                          - gridcell [ref=f3e338]:
+                            - textbox "Rejected by" [ref=f3e345]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e346]:
+                            - textbox "External receipt number" [ref=f3e353]:
+                              - /placeholder: ""
+                          - gridcell [ref=f3e354]:
+                            - checkbox "Payment Sent" [ref=f3e360]:
+                              - generic "No" [ref=f3e361]
+                          - gridcell [ref=f3e365]:
+                            - textbox "Workflow Status" [ref=f3e371] [cursor=pointer]: Draft
+                    - row [ref=f3e375]:
+                      - generic:
+                        - generic [ref=f3e377]:
+                          - gridcell [ref=f3e378]:
+                            - checkbox "Select or unselect row" [ref=f3e379] [cursor=pointer]
+                          - gridcell [ref=f3e383]:
+                            - status "The row is up to date." [ref=f3e384]
+                        - generic [ref=f3e388]:
+                          - gridcell [ref=f3e389]:
+                            - textbox "Journal batch number" [ref=f3e396] [cursor=pointer]: REL-009511
+                          - gridcell [ref=f3e397]:
+                            - textbox "Name" [ref=f3e404]: ARBR
+                          - gridcell [ref=f3e405]:
+                            - textbox "Description" [ref=f3e412]: Customers Receipt
+                          - gridcell [ref=f3e413]:
+                            - checkbox "Posted" [ref=f3e419]:
+                              - generic "No" [ref=f3e420]
+                          - gridcell [ref=f3e423]:
+                            - textbox "Posted on" [ref=f3e430]
+                          - gridcell [ref=f3e431]:
+                            - checkbox "Log" [checked] [ref=f3e437]:
+                              - generic "Yes" [ref=f3e438]
+                          - gridcell [ref=f3e442]:
+                            - img "In use No image" [ref=f3e448]
+                          - gridcell [ref=f3e450]:
+                            - textbox "In use by" [ref=f3e457]
+                          - gridcell [ref=f3e458]:
+                            - textbox "Modified by" [ref=f3e465]: "27400"
+                          - gridcell [ref=f3e466]:
+                            - textbox "Modified by" [ref=f3e473]: Plaban Kar
+                          - gridcell [ref=f3e474]:
+                            - textbox "Rejected by" [ref=f3e481]
+                          - gridcell [ref=f3e482]:
+                            - textbox "External receipt number" [ref=f3e489]
+                          - gridcell [ref=f3e490]:
+                            - checkbox "Payment Sent" [ref=f3e496]:
+                              - generic "No" [ref=f3e497]
+                          - gridcell [ref=f3e501]:
+                            - textbox "Workflow Status" [ref=f3e507] [cursor=pointer]: Draft
+                    - row [ref=f3e511]:
+                      - generic:
+                        - generic [ref=f3e513]:
+                          - gridcell [ref=f3e514]:
+                            - checkbox "Select or unselect row" [ref=f3e515] [cursor=pointer]
+                          - gridcell [ref=f3e519]:
+                            - status "The row is up to date." [ref=f3e520]
+                        - generic [ref=f3e524]:
+                          - gridcell [ref=f3e525]:
+                            - textbox "Journal batch number" [ref=f3e532] [cursor=pointer]: REL-009558
+                          - gridcell [ref=f3e533]:
+                            - textbox "Name" [ref=f3e540]: ARBR
+                          - gridcell [ref=f3e541]:
+                            - textbox "Description" [ref=f3e548]: Customers Receipt
+                          - gridcell [ref=f3e549]:
+                            - checkbox "Posted" [ref=f3e555]:
+                              - generic "No" [ref=f3e556]
+                          - gridcell [ref=f3e559]:
+                            - textbox "Posted on" [ref=f3e566]
+                          - gridcell [ref=f3e567]:
+                            - checkbox "Log" [ref=f3e573]:
+                              - generic "No" [ref=f3e574]
+                          - gridcell [ref=f3e577]:
+                            - img "In use No image" [ref=f3e583]
+                          - gridcell [ref=f3e585]:
+                            - textbox "In use by" [ref=f3e592]
+                          - gridcell [ref=f3e593]:
+                            - textbox "Modified by" [ref=f3e600]: "17974"
+                          - gridcell [ref=f3e601]:
+                            - textbox "Modified by" [ref=f3e608]: Subramanian R C
+                          - gridcell [ref=f3e609]:
+                            - textbox "Rejected by" [ref=f3e616]
+                          - gridcell [ref=f3e617]:
+                            - textbox "External receipt number" [ref=f3e624]
+                          - gridcell [ref=f3e625]:
+                            - checkbox "Payment Sent" [ref=f3e631]:
+                              - generic "No" [ref=f3e632]
+                          - gridcell [ref=f3e636]:
+                            - textbox "Workflow Status" [ref=f3e642] [cursor=pointer]: Draft
+                    - row [ref=f3e646]:
+                      - generic:
+                        - generic [ref=f3e648]:
+                          - gridcell [ref=f3e649]:
+                            - checkbox "Select or unselect row" [ref=f3e650] [cursor=pointer]
+                          - gridcell [ref=f3e654]:
+                            - status "The row is up to date." [ref=f3e655]
+                        - generic [ref=f3e659]:
+                          - gridcell [ref=f3e660]:
+                            - textbox "Journal batch number" [ref=f3e667] [cursor=pointer]: REL-009944
+                          - gridcell [ref=f3e668]:
+                            - textbox "Name" [ref=f3e675]: ARBR
+                          - gridcell [ref=f3e676]:
+                            - textbox "Description" [ref=f3e683]: Customers Receipt
+                          - gridcell [ref=f3e684]:
+                            - checkbox "Posted" [ref=f3e690]:
+                              - generic "No" [ref=f3e691]
+                          - gridcell [ref=f3e694]:
+                            - textbox "Posted on" [ref=f3e701]
+                          - gridcell [ref=f3e702]:
+                            - checkbox "Log" [checked] [ref=f3e708]:
+                              - generic "Yes" [ref=f3e709]
+                          - gridcell [ref=f3e713]:
+                            - img "In use No image" [ref=f3e719]
+                          - gridcell [ref=f3e721]:
+                            - textbox "In use by" [ref=f3e728]
+                          - gridcell [ref=f3e729]:
+                            - textbox "Modified by" [ref=f3e736]: "14922"
+                          - gridcell [ref=f3e737]:
+                            - textbox "Modified by" [ref=f3e744]: Bamadeba Sahoo
+                          - gridcell [ref=f3e745]:
+                            - textbox "Rejected by" [ref=f3e752]
+                          - gridcell [ref=f3e753]:
+                            - textbox "External receipt number" [ref=f3e760]
+                          - gridcell [ref=f3e761]:
+                            - checkbox "Payment Sent" [ref=f3e767]:
+                              - generic "No" [ref=f3e768]
+                          - gridcell [ref=f3e772]:
+                            - textbox "Workflow Status" [ref=f3e778] [cursor=pointer]: Draft
+                    - row [ref=f3e782]:
+                      - generic:
+                        - generic [ref=f3e784]:
+                          - gridcell [ref=f3e785]:
+                            - checkbox "Select or unselect row" [ref=f3e786] [cursor=pointer]
+                          - gridcell [ref=f3e790]:
+                            - status "The row is up to date." [ref=f3e791]
+                        - generic [ref=f3e795]:
+                          - gridcell [ref=f3e796]:
+                            - textbox "Journal batch number" [ref=f3e803] [cursor=pointer]: REL-009989
+                          - gridcell [ref=f3e804]:
+                            - textbox "Name" [ref=f3e811]: ARBR
+                          - gridcell [ref=f3e812]:
+                            - textbox "Description" [ref=f3e819]: Customers Receipt
+                          - gridcell [ref=f3e820]:
+                            - checkbox "Posted" [ref=f3e826]:
+                              - generic "No" [ref=f3e827]
+                          - gridcell [ref=f3e830]:
+                            - textbox "Posted on" [ref=f3e837]
+                          - gridcell [ref=f3e838]:
+                            - checkbox "Log" [ref=f3e844]:
+                              - generic "No" [ref=f3e845]
+                          - gridcell [ref=f3e848]:
+                            - img "In use No image" [ref=f3e854]
+                          - gridcell [ref=f3e856]:
+                            - textbox "In use by" [ref=f3e863]
+                          - gridcell [ref=f3e864]:
+                            - textbox "Modified by" [ref=f3e871]: "23391"
+                          - gridcell [ref=f3e872]:
+                            - textbox "Modified by" [ref=f3e879]: Kirana K L
+                          - gridcell [ref=f3e880]:
+                            - textbox "Rejected by" [ref=f3e887]
+                          - gridcell [ref=f3e888]:
+                            - textbox "External receipt number" [ref=f3e895]
+                          - gridcell [ref=f3e896]:
+                            - checkbox "Payment Sent" [ref=f3e902]:
+                              - generic "No" [ref=f3e903]
+                          - gridcell [ref=f3e907]:
+                            - textbox "Workflow Status" [ref=f3e913] [cursor=pointer]: Draft
+                    - row [ref=f3e917]:
+                      - generic:
+                        - generic [ref=f3e919]:
+                          - gridcell [ref=f3e920]:
+                            - checkbox "Select or unselect row" [ref=f3e921] [cursor=pointer]
+                          - gridcell [ref=f3e925]:
+                            - status "The row is up to date." [ref=f3e926]
+                        - generic [ref=f3e930]:
+                          - gridcell [ref=f3e931]:
+                            - textbox "Journal batch number" [ref=f3e938] [cursor=pointer]: REL-010418
+                          - gridcell [ref=f3e939]:
+                            - textbox "Name" [ref=f3e946]: ARBR
+                          - gridcell [ref=f3e947]:
+                            - textbox "Description" [ref=f3e954]: Customers Receipt
+                          - gridcell [ref=f3e955]:
+                            - checkbox "Posted" [ref=f3e961]:
+                              - generic "No" [ref=f3e962]
+                          - gridcell [ref=f3e965]:
+                            - textbox "Posted on" [ref=f3e972]
+                          - gridcell [ref=f3e973]:
+                            - checkbox "Log" [ref=f3e979]:
+                              - generic "No" [ref=f3e980]
+                          - gridcell [ref=f3e983]:
+                            - img "In use No image" [ref=f3e989]
+                          - gridcell [ref=f3e991]:
+                            - textbox "In use by" [ref=f3e998]
+                          - gridcell [ref=f3e999]:
+                            - textbox "Modified by" [ref=f3e1006]: "14922"
+                          - gridcell [ref=f3e1007]:
+                            - textbox "Modified by" [ref=f3e1014]: Bamadeba Sahoo
+                          - gridcell [ref=f3e1015]:
+                            - textbox "Rejected by" [ref=f3e1022]
+                          - gridcell [ref=f3e1023]:
+                            - textbox "External receipt number" [ref=f3e1030]
+                          - gridcell [ref=f3e1031]:
+                            - checkbox "Payment Sent" [ref=f3e1037]:
+                              - generic "No" [ref=f3e1038]
+                          - gridcell [ref=f3e1042]:
+                            - textbox "Workflow Status" [ref=f3e1048] [cursor=pointer]: Draft
+                    - row [ref=f3e1052]:
+                      - generic:
+                        - generic [ref=f3e1054]:
+                          - gridcell [ref=f3e1055]:
+                            - checkbox "Select or unselect row" [ref=f3e1056] [cursor=pointer]
+                          - gridcell [ref=f3e1060]:
+                            - status "The row is up to date." [ref=f3e1061]
+                        - generic [ref=f3e1065]:
+                          - gridcell [ref=f3e1066]:
+                            - textbox "Journal batch number" [ref=f3e1073] [cursor=pointer]: REL-010597
+                          - gridcell [ref=f3e1074]:
+                            - textbox "Name" [ref=f3e1081]: ARBR
+                          - gridcell [ref=f3e1082]:
+                            - textbox "Description" [ref=f3e1089]: Customers Receipt
+                          - gridcell [ref=f3e1090]:
+                            - checkbox "Posted" [ref=f3e1096]:
+                              - generic "No" [ref=f3e1097]
+                          - gridcell [ref=f3e1100]:
+                            - textbox "Posted on" [ref=f3e1107]
+                          - gridcell [ref=f3e1108]:
+                            - checkbox "Log" [ref=f3e1114]:
+                              - generic "No" [ref=f3e1115]
+                          - gridcell [ref=f3e1118]:
+                            - img "In use No image" [ref=f3e1124]
+                          - gridcell [ref=f3e1126]:
+                            - textbox "In use by" [ref=f3e1133]
+                          - gridcell [ref=f3e1134]:
+                            - textbox "Modified by" [ref=f3e1141]: "14922"
+                          - gridcell [ref=f3e1142]:
+                            - textbox "Modified by" [ref=f3e1149]: Bamadeba Sahoo
+                          - gridcell [ref=f3e1150]:
+                            - textbox "Rejected by" [ref=f3e1157]
+                          - gridcell [ref=f3e1158]:
+                            - textbox "External receipt number" [ref=f3e1165]
+                          - gridcell [ref=f3e1166]:
+                            - checkbox "Payment Sent" [ref=f3e1172]:
+                              - generic "No" [ref=f3e1173]
+                          - gridcell [ref=f3e1177]:
+                            - textbox "Workflow Status" [ref=f3e1183] [cursor=pointer]: Draft
+                    - row [ref=f3e1187]:
+                      - generic:
+                        - generic [ref=f3e1189]:
+                          - gridcell [ref=f3e1190]:
+                            - checkbox "Select or unselect row" [ref=f3e1191] [cursor=pointer]
+                          - gridcell [ref=f3e1195]:
+                            - status "The row is up to date." [ref=f3e1196]
+                        - generic [ref=f3e1200]:
+                          - gridcell [ref=f3e1201]:
+                            - textbox "Journal batch number" [ref=f3e1208] [cursor=pointer]: REL-010816
+                          - gridcell [ref=f3e1209]:
+                            - textbox "Name" [ref=f3e1216]: ARBP
+                          - gridcell [ref=f3e1217]:
+                            - textbox "Description" [ref=f3e1224]: unable to delete the line item
+                          - gridcell [ref=f3e1225]:
+                            - checkbox "Posted" [ref=f3e1231]:
+                              - generic "No" [ref=f3e1232]
+                          - gridcell [ref=f3e1235]:
+                            - textbox "Posted on" [ref=f3e1242]
+                          - gridcell [ref=f3e1243]:
+                            - checkbox "Log" [ref=f3e1249]:
+                              - generic "No" [ref=f3e1250]
+                          - gridcell [ref=f3e1253]:
+                            - img "In use No image" [ref=f3e1259]
+                          - gridcell [ref=f3e1261]:
+                            - textbox "In use by" [ref=f3e1268]
+                          - gridcell [ref=f3e1269]:
+                            - textbox "Modified by" [ref=f3e1276]: "23744"
+                          - gridcell [ref=f3e1277]:
+                            - textbox "Modified by" [ref=f3e1284]: Madhu S B
+                          - gridcell [ref=f3e1285]:
+                            - textbox "Rejected by" [ref=f3e1292]
+                          - gridcell [ref=f3e1293]:
+                            - textbox "External receipt number" [ref=f3e1300]
+                          - gridcell [ref=f3e1301]:
+                            - checkbox "Payment Sent" [ref=f3e1307]:
+                              - generic "No" [ref=f3e1308]
+                          - gridcell [ref=f3e1312]:
+                            - textbox "Workflow Status" [ref=f3e1318] [cursor=pointer]: Draft
+                    - row [ref=f3e1322]:
+                      - generic:
+                        - generic [ref=f3e1324]:
+                          - gridcell [ref=f3e1325]:
+                            - checkbox "Select or unselect row" [ref=f3e1326] [cursor=pointer]
+                          - gridcell [ref=f3e1330]:
+                            - status "The row is up to date." [ref=f3e1331]
+                        - generic [ref=f3e1335]:
+                          - gridcell [ref=f3e1336]:
+                            - textbox "Journal batch number" [ref=f3e1343] [cursor=pointer]: REL-011243
+                          - gridcell [ref=f3e1344]:
+                            - textbox "Name" [ref=f3e1351]: ARBR
+                          - gridcell [ref=f3e1352]:
+                            - textbox "Description" [ref=f3e1359]: Customers Receipt
+                          - gridcell [ref=f3e1360]:
+                            - checkbox "Posted" [ref=f3e1366]:
+                              - generic "No" [ref=f3e1367]
+                          - gridcell [ref=f3e1370]:
+                            - textbox "Posted on" [ref=f3e1377]
+                          - gridcell [ref=f3e1378]:
+                            - checkbox "Log" [ref=f3e1384]:
+                              - generic "No" [ref=f3e1385]
+                          - gridcell [ref=f3e1388]:
+                            - img "In use No image" [ref=f3e1394]
+                          - gridcell [ref=f3e1396]:
+                            - textbox "In use by" [ref=f3e1403]
+                          - gridcell [ref=f3e1404]:
+                            - textbox "Modified by" [ref=f3e1411]: "920"
+                          - gridcell [ref=f3e1412]:
+                            - textbox "Modified by" [ref=f3e1419]: Srinivas P G
+                          - gridcell [ref=f3e1420]:
+                            - textbox "Rejected by" [ref=f3e1427]
+                          - gridcell [ref=f3e1428]:
+                            - textbox "External receipt number" [ref=f3e1435]
+                          - gridcell [ref=f3e1436]:
+                            - checkbox "Payment Sent" [ref=f3e1442]:
+                              - generic "No" [ref=f3e1443]
+                          - gridcell [ref=f3e1447]:
+                            - textbox "Workflow Status" [ref=f3e1453] [cursor=pointer]: Draft
+                    - row [ref=f3e1457]:
+                      - generic:
+                        - generic [ref=f3e1459]:
+                          - gridcell [ref=f3e1460]:
+                            - checkbox "Select or unselect row" [ref=f3e1461] [cursor=pointer]
+                          - gridcell [ref=f3e1465]:
+                            - status "The row is up to date." [ref=f3e1466]
+                        - generic [ref=f3e1470]:
+                          - gridcell [ref=f3e1471]:
+                            - textbox "Journal batch number" [ref=f3e1478] [cursor=pointer]: REL-011302
+                          - gridcell [ref=f3e1479]:
+                            - textbox "Name" [ref=f3e1486]: ARBR
+                          - gridcell [ref=f3e1487]:
+                            - textbox "Description" [ref=f3e1494]: Customers Receipt
+                          - gridcell [ref=f3e1495]:
+                            - checkbox "Posted" [ref=f3e1501]:
+                              - generic "No" [ref=f3e1502]
+                          - gridcell [ref=f3e1505]:
+                            - textbox "Posted on" [ref=f3e1512]
+                          - gridcell [ref=f3e1513]:
+                            - checkbox "Log" [ref=f3e1519]:
+                              - generic "No" [ref=f3e1520]
+                          - gridcell [ref=f3e1523]:
+                            - img "In use No image" [ref=f3e1529]
+                          - gridcell [ref=f3e1531]:
+                            - textbox "In use by" [ref=f3e1538]
+                          - gridcell [ref=f3e1539]:
+                            - textbox "Modified by" [ref=f3e1546]: "920"
+                          - gridcell [ref=f3e1547]:
+                            - textbox "Modified by" [ref=f3e1554]: Srinivas P G
+                          - gridcell [ref=f3e1555]:
+                            - textbox "Rejected by" [ref=f3e1562]
+                          - gridcell [ref=f3e1563]:
+                            - textbox "External receipt number" [ref=f3e1570]
+                          - gridcell [ref=f3e1571]:
+                            - checkbox "Payment Sent" [ref=f3e1577]:
+                              - generic "No" [ref=f3e1578]
+                          - gridcell [ref=f3e1582]:
+                            - textbox "Workflow Status" [ref=f3e1588] [cursor=pointer]: Draft
+                    - row [ref=f3e1592]:
+                      - generic:
+                        - generic [ref=f3e1594]:
+                          - gridcell [ref=f3e1595]:
+                            - checkbox "Select or unselect row" [ref=f3e1596] [cursor=pointer]
+                          - gridcell [ref=f3e1600]:
+                            - status "The row is up to date." [ref=f3e1601]
+                        - generic [ref=f3e1605]:
+                          - gridcell [ref=f3e1606]:
+                            - textbox "Journal batch number" [ref=f3e1613] [cursor=pointer]: REL-011352
+                          - gridcell [ref=f3e1614]:
+                            - textbox "Name" [ref=f3e1621]: ARBR
+                          - gridcell [ref=f3e1622]:
+                            - textbox "Description" [ref=f3e1629]: Customers Receipt
+                          - gridcell [ref=f3e1630]:
+                            - checkbox "Posted" [ref=f3e1636]:
+                              - generic "No" [ref=f3e1637]
+                          - gridcell [ref=f3e1640]:
+                            - textbox "Posted on" [ref=f3e1647]
+                          - gridcell [ref=f3e1648]:
+                            - checkbox "Log" [ref=f3e1654]:
+                              - generic "No" [ref=f3e1655]
+                          - gridcell [ref=f3e1658]:
+                            - img "In use No image" [ref=f3e1664]
+                          - gridcell [ref=f3e1666]:
+                            - textbox "In use by" [ref=f3e1673]
+                          - gridcell [ref=f3e1674]:
+                            - textbox "Modified by" [ref=f3e1681]: "14581"
+                          - gridcell [ref=f3e1682]:
+                            - textbox "Modified by" [ref=f3e1689]: Rashmi Ranjan Mahapatra
+                          - gridcell [ref=f3e1690]:
+                            - textbox "Rejected by" [ref=f3e1697]
+                          - gridcell [ref=f3e1698]:
+                            - textbox "External receipt number" [ref=f3e1705]
+                          - gridcell [ref=f3e1706]:
+                            - checkbox "Payment Sent" [ref=f3e1712]:
+                              - generic "No" [ref=f3e1713]
+                          - gridcell [ref=f3e1717]:
+                            - textbox "Workflow Status" [ref=f3e1723] [cursor=pointer]: Draft
+                    - row [ref=f3e1727]:
+                      - generic:
+                        - generic [ref=f3e1729]:
+                          - gridcell [ref=f3e1730]:
+                            - checkbox "Select or unselect row" [ref=f3e1731] [cursor=pointer]
+                          - gridcell [ref=f3e1735]:
+                            - status "The row is up to date." [ref=f3e1736]
+                        - generic [ref=f3e1740]:
+                          - gridcell [ref=f3e1741]:
+                            - textbox "Journal batch number" [ref=f3e1748] [cursor=pointer]: REL-011643
+                          - gridcell [ref=f3e1749]:
+                            - textbox "Name" [ref=f3e1756]: ARBR
+                          - gridcell [ref=f3e1757]:
+                            - textbox "Description" [ref=f3e1764]: Customers Receipt
+                          - gridcell [ref=f3e1765]:
+                            - checkbox "Posted" [ref=f3e1771]:
+                              - generic "No" [ref=f3e1772]
+                          - gridcell [ref=f3e1775]:
+                            - textbox "Posted on" [ref=f3e1782]
+                          - gridcell [ref=f3e1783]:
+                            - checkbox "Log" [ref=f3e1789]:
+                              - generic "No" [ref=f3e1790]
+                          - gridcell [ref=f3e1793]:
+                            - img "In use No image" [ref=f3e1799]
+                          - gridcell [ref=f3e1801]:
+                            - textbox "In use by" [ref=f3e1808]
+                          - gridcell [ref=f3e1809]:
+                            - textbox "Modified by" [ref=f3e1816]: "23391"
+                          - gridcell [ref=f3e1817]:
+                            - textbox "Modified by" [ref=f3e1824]: Kirana K L
+                          - gridcell [ref=f3e1825]:
+                            - textbox "Rejected by" [ref=f3e1832]
+                          - gridcell [ref=f3e1833]:
+                            - textbox "External receipt number" [ref=f3e1840]
+                          - gridcell [ref=f3e1841]:
+                            - checkbox "Payment Sent" [ref=f3e1847]:
+                              - generic "No" [ref=f3e1848]
+                          - gridcell [ref=f3e1852]:
+                            - textbox "Workflow Status" [ref=f3e1858] [cursor=pointer]: Draft
+                    - row [ref=f3e1862]:
+                      - generic:
+                        - generic [ref=f3e1864]:
+                          - gridcell [ref=f3e1865]:
+                            - checkbox "Select or unselect row" [ref=f3e1866] [cursor=pointer]
+                          - gridcell [ref=f3e1870]:
+                            - status "The row is up to date." [ref=f3e1871]
+                        - generic [ref=f3e1875]:
+                          - gridcell [ref=f3e1876]:
+                            - textbox "Journal batch number" [ref=f3e1883] [cursor=pointer]: REL-011677
+                          - gridcell [ref=f3e1884]:
+                            - textbox "Name" [ref=f3e1891]: ARBR
+                          - gridcell [ref=f3e1892]:
+                            - textbox "Description" [ref=f3e1899]: Customers Receipt
+                          - gridcell [ref=f3e1900]:
+                            - checkbox "Posted" [ref=f3e1906]:
+                              - generic "No" [ref=f3e1907]
+                          - gridcell [ref=f3e1910]:
+                            - textbox "Posted on" [ref=f3e1917]
+                          - gridcell [ref=f3e1918]:
+                            - checkbox "Log" [ref=f3e1924]:
+                              - generic "No" [ref=f3e1925]
+                          - gridcell [ref=f3e1928]:
+                            - img "In use No image" [ref=f3e1934]
+                          - gridcell [ref=f3e1936]:
+                            - textbox "In use by" [ref=f3e1943]
+                          - gridcell [ref=f3e1944]:
+                            - textbox "Modified by" [ref=f3e1951]: "23391"
+                          - gridcell [ref=f3e1952]:
+                            - textbox "Modified by" [ref=f3e1959]: Kirana K L
+                          - gridcell [ref=f3e1960]:
+                            - textbox "Rejected by" [ref=f3e1967]
+                          - gridcell [ref=f3e1968]:
+                            - textbox "External receipt number" [ref=f3e1975]
+                          - gridcell [ref=f3e1976]:
+                            - checkbox "Payment Sent" [ref=f3e1982]:
+                              - generic "No" [ref=f3e1983]
+                          - gridcell [ref=f3e1987]:
+                            - textbox "Workflow Status" [ref=f3e1993] [cursor=pointer]: Draft
+                    - row [ref=f3e1997]:
+                      - generic:
+                        - generic [ref=f3e1999]:
+                          - gridcell [ref=f3e2000]:
+                            - checkbox "Select or unselect row" [ref=f3e2001] [cursor=pointer]
+                          - gridcell [ref=f3e2005]:
+                            - status "The row is up to date." [ref=f3e2006]
+                        - generic [ref=f3e2010]:
+                          - gridcell [ref=f3e2011]:
+                            - textbox "Journal batch number" [ref=f3e2018] [cursor=pointer]: REL-011710
+                          - gridcell [ref=f3e2019]:
+                            - textbox "Name" [ref=f3e2026]: ARBR
+                          - gridcell [ref=f3e2027]:
+                            - textbox "Description" [ref=f3e2034]: Customers Receipt
+                          - gridcell [ref=f3e2035]:
+                            - checkbox "Posted" [ref=f3e2041]:
+                              - generic "No" [ref=f3e2042]
+                          - gridcell [ref=f3e2045]:
+                            - textbox "Posted on" [ref=f3e2052]
+                          - gridcell [ref=f3e2053]:
+                            - checkbox "Log" [ref=f3e2059]:
+                              - generic "No" [ref=f3e2060]
+                          - gridcell [ref=f3e2063]:
+                            - img "In use No image" [ref=f3e2069]
+                          - gridcell [ref=f3e2071]:
+                            - textbox "In use by" [ref=f3e2078]
+                          - gridcell [ref=f3e2079]:
+                            - textbox "Modified by" [ref=f3e2086]: "920"
+                          - gridcell [ref=f3e2087]:
+                            - textbox "Modified by" [ref=f3e2094]: Srinivas P G
+                          - gridcell [ref=f3e2095]:
+                            - textbox "Rejected by" [ref=f3e2102]
+                          - gridcell [ref=f3e2103]:
+                            - textbox "External receipt number" [ref=f3e2110]
+                          - gridcell [ref=f3e2111]:
+                            - checkbox "Payment Sent" [ref=f3e2117]:
+                              - generic "No" [ref=f3e2118]
+                          - gridcell [ref=f3e2122]:
+                            - textbox "Workflow Status" [ref=f3e2128] [cursor=pointer]: Draft
+                    - row [ref=f3e2132]:
+                      - generic:
+                        - generic [ref=f3e2134]:
+                          - gridcell [ref=f3e2135]:
+                            - checkbox "Select or unselect row" [ref=f3e2136] [cursor=pointer]
+                          - gridcell [ref=f3e2140]:
+                            - status "The row is up to date." [ref=f3e2141]
+                        - generic [ref=f3e2145]:
+                          - gridcell [ref=f3e2146]:
+                            - textbox "Journal batch number" [ref=f3e2153] [cursor=pointer]: REL-011905
+                          - gridcell [ref=f3e2154]:
+                            - textbox "Name" [ref=f3e2161]: ARBR
+                          - gridcell [ref=f3e2162]:
+                            - textbox "Description" [ref=f3e2169]: Customers Receipt
+                          - gridcell [ref=f3e2170]:
+                            - checkbox "Posted" [ref=f3e2176]:
+                              - generic "No" [ref=f3e2177]
+                          - gridcell [ref=f3e2180]:
+                            - textbox "Posted on" [ref=f3e2187]
+                          - gridcell [ref=f3e2188]:
+                            - checkbox "Log" [checked] [ref=f3e2194]:
+                              - generic "Yes" [ref=f3e2195]
+                          - gridcell [ref=f3e2199]:
+                            - img "In use No image" [ref=f3e2205]
+                          - gridcell [ref=f3e2207]:
+                            - textbox "In use by" [ref=f3e2214]
+                          - gridcell [ref=f3e2215]:
+                            - textbox "Modified by" [ref=f3e2222]: "24660"
+                          - gridcell [ref=f3e2223]:
+                            - textbox "Modified by" [ref=f3e2230]: Basani Anand Reddy
+                          - gridcell [ref=f3e2231]:
+                            - textbox "Rejected by" [ref=f3e2238]
+                          - gridcell [ref=f3e2239]:
+                            - textbox "External receipt number" [ref=f3e2246]
+                          - gridcell [ref=f3e2247]:
+                            - checkbox "Payment Sent" [ref=f3e2253]:
+                              - generic "No" [ref=f3e2254]
+                          - gridcell [ref=f3e2258]:
+                            - textbox "Workflow Status" [ref=f3e2264] [cursor=pointer]: Draft
+                    - row [ref=f3e2268]:
+                      - generic:
+                        - generic [ref=f3e2270]:
+                          - gridcell [ref=f3e2271]:
+                            - checkbox "Select or unselect row" [ref=f3e2272] [cursor=pointer]
+                          - gridcell [ref=f3e2276]:
+                            - status "The row is up to date." [ref=f3e2277]
+                        - generic [ref=f3e2281]:
+                          - gridcell [ref=f3e2282]:
+                            - textbox "Journal batch number" [ref=f3e2289] [cursor=pointer]: REL-011907
+                          - gridcell [ref=f3e2290]:
+                            - textbox "Name" [ref=f3e2297]: ARBR
+                          - gridcell [ref=f3e2298]:
+                            - textbox "Description" [ref=f3e2305]: Customers Receipt
+                          - gridcell [ref=f3e2306]:
+                            - checkbox "Posted" [ref=f3e2312]:
+                              - generic "No" [ref=f3e2313]
+                          - gridcell [ref=f3e2316]:
+                            - textbox "Posted on" [ref=f3e2323]
+                          - gridcell [ref=f3e2324]:
+                            - checkbox "Log" [ref=f3e2330]:
+                              - generic "No" [ref=f3e2331]
+                          - gridcell [ref=f3e2334]:
+                            - img "In use No image" [ref=f3e2340]
+                          - gridcell [ref=f3e2342]:
+                            - textbox "In use by" [ref=f3e2349]
+                          - gridcell [ref=f3e2350]:
+                            - textbox "Modified by" [ref=f3e2357]: "23391"
+                          - gridcell [ref=f3e2358]:
+                            - textbox "Modified by" [ref=f3e2365]: Kirana K L
+                          - gridcell [ref=f3e2366]:
+                            - textbox "Rejected by" [ref=f3e2373]
+                          - gridcell [ref=f3e2374]:
+                            - textbox "External receipt number" [ref=f3e2381]
+                          - gridcell [ref=f3e2382]:
+                            - checkbox "Payment Sent" [ref=f3e2388]:
+                              - generic "No" [ref=f3e2389]
+                          - gridcell [ref=f3e2393]:
+                            - textbox "Workflow Status" [ref=f3e2399] [cursor=pointer]: Draft
+                    - row [ref=f3e2403]:
+                      - generic:
+                        - generic [ref=f3e2405]:
+                          - gridcell [ref=f3e2406]:
+                            - checkbox "Select or unselect row" [ref=f3e2407] [cursor=pointer]
+                          - gridcell [ref=f3e2411]:
+                            - status "The row is up to date." [ref=f3e2412]
+                        - generic [ref=f3e2416]:
+                          - gridcell [ref=f3e2417]:
+                            - textbox "Journal batch number" [ref=f3e2424] [cursor=pointer]: REL-011994
+                          - gridcell [ref=f3e2425]:
+                            - textbox "Name" [ref=f3e2432]: ARBR
+                          - gridcell [ref=f3e2433]:
+                            - textbox "Description" [ref=f3e2440]: Customers Receipt
+                          - gridcell [ref=f3e2441]:
+                            - checkbox "Posted" [ref=f3e2447]:
+                              - generic "No" [ref=f3e2448]
+                          - gridcell [ref=f3e2451]:
+                            - textbox "Posted on" [ref=f3e2458]
+                          - gridcell [ref=f3e2459]:
+                            - checkbox "Log" [checked] [ref=f3e2465]:
+                              - generic "Yes" [ref=f3e2466]
+                          - gridcell [ref=f3e2470]:
+                            - img "In use No image" [ref=f3e2476]
+                          - gridcell [ref=f3e2478]:
+                            - textbox "In use by" [ref=f3e2485]
+                          - gridcell [ref=f3e2486]:
+                            - textbox "Modified by" [ref=f3e2493]: "14922"
+                          - gridcell [ref=f3e2494]:
+                            - textbox "Modified by" [ref=f3e2501]: Bamadeba Sahoo
+                          - gridcell [ref=f3e2502]:
+                            - textbox "Rejected by" [ref=f3e2509]
+                          - gridcell [ref=f3e2510]:
+                            - textbox "External receipt number" [ref=f3e2517]
+                          - gridcell [ref=f3e2518]:
+                            - checkbox "Payment Sent" [ref=f3e2524]:
+                              - generic "No" [ref=f3e2525]
+                          - gridcell [ref=f3e2529]:
+                            - textbox "Workflow Status" [ref=f3e2535] [cursor=pointer]: Draft
+                    - row [ref=f3e2539]:
+                      - generic:
+                        - generic [ref=f3e2541]:
+                          - gridcell [ref=f3e2542]:
+                            - checkbox "Select or unselect row" [ref=f3e2543] [cursor=pointer]
+                          - gridcell [ref=f3e2547]:
+                            - status "The row is up to date." [ref=f3e2548]
+                        - generic [ref=f3e2552]:
+                          - gridcell [ref=f3e2553]:
+                            - textbox "Journal batch number" [ref=f3e2560] [cursor=pointer]: REL-012176
+                          - gridcell [ref=f3e2561]:
+                            - textbox "Name" [ref=f3e2568]: ARBP
+                          - gridcell [ref=f3e2569]:
+                            - textbox "Description" [ref=f3e2576]: Customers Payment
+                          - gridcell [ref=f3e2577]:
+                            - checkbox "Posted" [ref=f3e2583]:
+                              - generic "No" [ref=f3e2584]
+                          - gridcell [ref=f3e2587]:
+                            - textbox "Posted on" [ref=f3e2594]
+                          - gridcell [ref=f3e2595]:
+                            - checkbox "Log" [ref=f3e2601]:
+                              - generic "No" [ref=f3e2602]
+                          - gridcell [ref=f3e2605]:
+                            - img "In use No image" [ref=f3e2611]
+                          - gridcell [ref=f3e2613]:
+                            - textbox "In use by" [ref=f3e2620]
+                          - gridcell [ref=f3e2621]:
+                            - textbox "Modified by" [ref=f3e2628]: "3832"
+                          - gridcell [ref=f3e2629]:
+                            - textbox "Modified by" [ref=f3e2636]: Kiran J
+                          - gridcell [ref=f3e2637]:
+                            - textbox "Rejected by" [ref=f3e2644]
+                          - gridcell [ref=f3e2645]:
+                            - textbox "External receipt number" [ref=f3e2652]
+                          - gridcell [ref=f3e2653]:
+                            - checkbox "Payment Sent" [ref=f3e2659]:
+                              - generic "No" [ref=f3e2660]
+                          - gridcell [ref=f3e2664]:
+                            - textbox "Workflow Status" [ref=f3e2670] [cursor=pointer]: Draft
+                    - row [ref=f3e2674]:
+                      - generic:
+                        - generic [ref=f3e2676]:
+                          - gridcell [ref=f3e2677]:
+                            - checkbox "Select or unselect row" [ref=f3e2678] [cursor=pointer]
+                          - gridcell [ref=f3e2682]:
+                            - status "The row is up to date." [ref=f3e2683]
+                        - generic [ref=f3e2687]:
+                          - gridcell [ref=f3e2688]:
+                            - textbox "Journal batch number" [ref=f3e2695] [cursor=pointer]: REL-012482
+                          - gridcell [ref=f3e2696]:
+                            - textbox "Name" [ref=f3e2703]: ARBP
+                          - gridcell [ref=f3e2704]:
+                            - textbox "Description" [ref=f3e2711]: Customers Payment
+                          - gridcell [ref=f3e2712]:
+                            - checkbox "Posted" [ref=f3e2718]:
+                              - generic "No" [ref=f3e2719]
+                          - gridcell [ref=f3e2722]:
+                            - textbox "Posted on" [ref=f3e2729]
+                          - gridcell [ref=f3e2730]:
+                            - checkbox "Log" [ref=f3e2736]:
+                              - generic "No" [ref=f3e2737]
+                          - gridcell [ref=f3e2740]:
+                            - img "In use No image" [ref=f3e2746]
+                          - gridcell [ref=f3e2748]:
+                            - textbox "In use by" [ref=f3e2755]
+                          - gridcell [ref=f3e2756]:
+                            - textbox "Modified by" [ref=f3e2763]: "3832"
+                          - gridcell [ref=f3e2764]:
+                            - textbox "Modified by" [ref=f3e2771]: Kiran J
+                          - gridcell [ref=f3e2772]:
+                            - textbox "Rejected by" [ref=f3e2779]
+                          - gridcell [ref=f3e2780]:
+                            - textbox "External receipt number" [ref=f3e2787]
+                          - gridcell [ref=f3e2788]:
+                            - checkbox "Payment Sent" [ref=f3e2794]:
+                              - generic "No" [ref=f3e2795]
+                          - gridcell [ref=f3e2799]:
+                            - textbox "Workflow Status" [ref=f3e2805] [cursor=pointer]: Draft
+                    - row [ref=f3e2809]:
+                      - generic:
+                        - generic [ref=f3e2811]:
+                          - gridcell [ref=f3e2812]:
+                            - checkbox "Select or unselect row" [ref=f3e2813] [cursor=pointer]
+                          - gridcell [ref=f3e2817]:
+                            - status "The row is up to date." [ref=f3e2818]
+                        - generic [ref=f3e2822]:
+                          - gridcell [ref=f3e2823]:
+                            - textbox "Journal batch number" [ref=f3e2830] [cursor=pointer]: REL-012668
+                          - gridcell [ref=f3e2831]:
+                            - textbox "Name" [ref=f3e2838]: ARBR
+                          - gridcell [ref=f3e2839]:
+                            - textbox "Description" [ref=f3e2846]: Customers Receipt
+                          - gridcell [ref=f3e2847]:
+                            - checkbox "Posted" [ref=f3e2853]:
+                              - generic "No" [ref=f3e2854]
+                          - gridcell [ref=f3e2857]:
+                            - textbox "Posted on" [ref=f3e2864]
+                          - gridcell [ref=f3e2865]:
+                            - checkbox "Log" [ref=f3e2871]:
+                              - generic "No" [ref=f3e2872]
+                          - gridcell [ref=f3e2875]:
+                            - img "In use No image" [ref=f3e2881]
+                          - gridcell [ref=f3e2883]:
+                            - textbox "In use by" [ref=f3e2890]
+                          - gridcell [ref=f3e2891]:
+                            - textbox "Modified by" [ref=f3e2898]: "920"
+                          - gridcell [ref=f3e2899]:
+                            - textbox "Modified by" [ref=f3e2906]: Srinivas P G
+                          - gridcell [ref=f3e2907]:
+                            - textbox "Rejected by" [ref=f3e2914]
+                          - gridcell [ref=f3e2915]:
+                            - textbox "External receipt number" [ref=f3e2922]
+                          - gridcell [ref=f3e2923]:
+                            - checkbox "Payment Sent" [ref=f3e2929]:
+                              - generic "No" [ref=f3e2930]
+                          - gridcell [ref=f3e2934]:
+                            - textbox "Workflow Status" [ref=f3e2940] [cursor=pointer]: Draft
+                    - row [ref=f3e2944]:
+                      - generic:
+                        - generic [ref=f3e2946]:
+                          - gridcell [ref=f3e2947]:
+                            - checkbox "Select or unselect row" [ref=f3e2948] [cursor=pointer]
+                          - gridcell [ref=f3e2952]:
+                            - status "The row is up to date." [ref=f3e2953]
+                        - generic [ref=f3e2957]:
+                          - gridcell [ref=f3e2958]:
+                            - textbox "Journal batch number" [ref=f3e2965] [cursor=pointer]: REL-012768
+                          - gridcell [ref=f3e2966]:
+                            - textbox "Name" [ref=f3e2973]: ARBR
+                          - gridcell [ref=f3e2974]:
+                            - textbox "Description" [ref=f3e2981]: Customers Receipt
+                          - gridcell [ref=f3e2982]:
+                            - checkbox "Posted" [ref=f3e2988]:
+                              - generic "No" [ref=f3e2989]
+                          - gridcell [ref=f3e2992]:
+                            - textbox "Posted on" [ref=f3e2999]
+                          - gridcell [ref=f3e3000]:
+                            - checkbox "Log" [ref=f3e3006]:
+                              - generic "No" [ref=f3e3007]
+                          - gridcell [ref=f3e3010]:
+                            - img "In use No image" [ref=f3e3016]
+                          - gridcell [ref=f3e3018]:
+                            - textbox "In use by" [ref=f3e3025]
+                          - gridcell [ref=f3e3026]:
+                            - textbox "Modified by" [ref=f3e3033]: "16121"
+                          - gridcell [ref=f3e3034]:
+                            - textbox "Modified by" [ref=f3e3041]: Venkatesh C
+                          - gridcell [ref=f3e3042]:
+                            - textbox "Rejected by" [ref=f3e3049]
+                          - gridcell [ref=f3e3050]:
+                            - textbox "External receipt number" [ref=f3e3057]
+                          - gridcell [ref=f3e3058]:
+                            - checkbox "Payment Sent" [ref=f3e3064]:
+                              - generic "No" [ref=f3e3065]
+                          - gridcell [ref=f3e3069]:
+                            - textbox "Workflow Status" [ref=f3e3075] [cursor=pointer]: Draft
+                    - row [ref=f3e3079]:
+                      - generic:
+                        - generic [ref=f3e3081]:
+                          - gridcell [ref=f3e3082]:
+                            - checkbox "Select or unselect row" [ref=f3e3083] [cursor=pointer]
+                          - gridcell [ref=f3e3087]:
+                            - status "The row is up to date." [ref=f3e3088]
+                        - generic [ref=f3e3092]:
+                          - gridcell [ref=f3e3093]:
+                            - textbox "Journal batch number" [ref=f3e3100] [cursor=pointer]: REL-012770
+                          - gridcell [ref=f3e3101]:
+                            - textbox "Name" [ref=f3e3108]: ARBR
+                          - gridcell [ref=f3e3109]:
+                            - textbox "Description" [ref=f3e3116]: Customers Receipt
+                          - gridcell [ref=f3e3117]:
+                            - checkbox "Posted" [ref=f3e3123]:
+                              - generic "No" [ref=f3e3124]
+                          - gridcell [ref=f3e3127]:
+                            - textbox "Posted on" [ref=f3e3134]
+                          - gridcell [ref=f3e3135]:
+                            - checkbox "Log" [ref=f3e3141]:
+                              - generic "No" [ref=f3e3142]
+                          - gridcell [ref=f3e3145]:
+                            - img "In use No image" [ref=f3e3151]
+                          - gridcell [ref=f3e3153]:
+                            - textbox "In use by" [ref=f3e3160]
+                          - gridcell [ref=f3e3161]:
+                            - textbox "Modified by" [ref=f3e3168]: "16121"
+                          - gridcell [ref=f3e3169]:
+                            - textbox "Modified by" [ref=f3e3176]: Venkatesh C
+                          - gridcell [ref=f3e3177]:
+                            - textbox "Rejected by" [ref=f3e3184]
+                          - gridcell [ref=f3e3185]:
+                            - textbox "External receipt number" [ref=f3e3192]
+                          - gridcell [ref=f3e3193]:
+                            - checkbox "Payment Sent" [ref=f3e3199]:
+                              - generic "No" [ref=f3e3200]
+                          - gridcell [ref=f3e3204]:
+                            - textbox "Workflow Status" [ref=f3e3210] [cursor=pointer]: Draft
+                    - row [ref=f3e3214]:
+                      - generic:
+                        - generic [ref=f3e3216]:
+                          - gridcell [ref=f3e3217]:
+                            - checkbox "Select or unselect row" [ref=f3e3218] [cursor=pointer]
+                          - gridcell [ref=f3e3222]:
+                            - status "The row is up to date." [ref=f3e3223]
+                        - generic [ref=f3e3227]:
+                          - gridcell [ref=f3e3228]:
+                            - textbox "Journal batch number" [ref=f3e3235] [cursor=pointer]: REL-012777
+                          - gridcell [ref=f3e3236]:
+                            - textbox "Name" [ref=f3e3243]: ARBR
+                          - gridcell [ref=f3e3244]:
+                            - textbox "Description" [ref=f3e3251]: Customers Receipt
+                          - gridcell [ref=f3e3252]:
+                            - checkbox "Posted" [ref=f3e3258]:
+                              - generic "No" [ref=f3e3259]
+                          - gridcell [ref=f3e3262]:
+                            - textbox "Posted on" [ref=f3e3269]
+                          - gridcell [ref=f3e3270]:
+                            - checkbox "Log" [ref=f3e3276]:
+                              - generic "No" [ref=f3e3277]
+                          - gridcell [ref=f3e3280]:
+                            - img "In use No image" [ref=f3e3286]
+                          - gridcell [ref=f3e3288]:
+                            - textbox "In use by" [ref=f3e3295]
+                          - gridcell [ref=f3e3296]:
+                            - textbox "Modified by" [ref=f3e3303]: "920"
+                          - gridcell [ref=f3e3304]:
+                            - textbox "Modified by" [ref=f3e3311]: Srinivas P G
+                          - gridcell [ref=f3e3312]:
+                            - textbox "Rejected by" [ref=f3e3319]
+                          - gridcell [ref=f3e3320]:
+                            - textbox "External receipt number" [ref=f3e3327]
+                          - gridcell [ref=f3e3328]:
+                            - checkbox "Payment Sent" [ref=f3e3334]:
+                              - generic "No" [ref=f3e3335]
+                          - gridcell [ref=f3e3339]:
+                            - textbox "Workflow Status" [ref=f3e3345] [cursor=pointer]: Draft
+                    - row [ref=f3e3349]:
+                      - generic:
+                        - generic [ref=f3e3351]:
+                          - gridcell [ref=f3e3352]:
+                            - checkbox "Select or unselect row" [ref=f3e3353] [cursor=pointer]
+                          - gridcell [ref=f3e3357]:
+                            - status "The row is up to date." [ref=f3e3358]
+                        - generic [ref=f3e3362]:
+                          - gridcell [ref=f3e3363]:
+                            - textbox "Journal batch number" [ref=f3e3370] [cursor=pointer]: REL-012795
+                          - gridcell [ref=f3e3371]:
+                            - textbox "Name" [ref=f3e3378]: ARBR
+                          - gridcell [ref=f3e3379]:
+                            - textbox "Description" [ref=f3e3386]: Customers Receipt
+                          - gridcell [ref=f3e3387]:
+                            - checkbox "Posted" [ref=f3e3393]:
+                              - generic "No" [ref=f3e3394]
+                          - gridcell [ref=f3e3397]:
+                            - textbox "Posted on" [ref=f3e3404]
+                          - gridcell [ref=f3e3405]:
+                            - checkbox "Log" [ref=f3e3411]:
+                              - generic "No" [ref=f3e3412]
+                          - gridcell [ref=f3e3415]:
+                            - img "In use No image" [ref=f3e3421]
+                          - gridcell [ref=f3e3423]:
+                            - textbox "In use by" [ref=f3e3430]
+                          - gridcell [ref=f3e3431]:
+                            - textbox "Modified by" [ref=f3e3438]: "920"
+                          - gridcell [ref=f3e3439]:
+                            - textbox "Modified by" [ref=f3e3446]: Srinivas P G
+                          - gridcell [ref=f3e3447]:
+                            - textbox "Rejected by" [ref=f3e3454]
+                          - gridcell [ref=f3e3455]:
+                            - textbox "External receipt number" [ref=f3e3462]
+                          - gridcell [ref=f3e3463]:
+                            - checkbox "Payment Sent" [ref=f3e3469]:
+                              - generic "No" [ref=f3e3470]
+                          - gridcell [ref=f3e3474]:
+                            - textbox "Workflow Status" [ref=f3e3480] [cursor=pointer]: Draft
+                    - row [ref=f3e3484]:
+                      - generic:
+                        - generic [ref=f3e3486]:
+                          - gridcell [ref=f3e3487]:
+                            - checkbox "Select or unselect row" [ref=f3e3488] [cursor=pointer]
+                          - gridcell [ref=f3e3492]:
+                            - status "The row is up to date." [ref=f3e3493]
+                        - generic [ref=f3e3497]:
+                          - gridcell [ref=f3e3498]:
+                            - textbox "Journal batch number" [ref=f3e3505] [cursor=pointer]: REL-012959
+                          - gridcell [ref=f3e3506]:
+                            - textbox "Name" [ref=f3e3513]: ARBR
+                          - gridcell [ref=f3e3514]:
+                            - textbox "Description" [ref=f3e3521]: Customers Receipt
+                          - gridcell [ref=f3e3522]:
+                            - checkbox "Posted" [ref=f3e3528]:
+                              - generic "No" [ref=f3e3529]
+                          - gridcell [ref=f3e3532]:
+                            - textbox "Posted on" [ref=f3e3539]
+                          - gridcell [ref=f3e3540]:
+                            - checkbox "Log" [ref=f3e3546]:
+                              - generic "No" [ref=f3e3547]
+                          - gridcell [ref=f3e3550]:
+                            - img "In use No image" [ref=f3e3556]
+                          - gridcell [ref=f3e3558]:
+                            - textbox "In use by" [ref=f3e3565]
+                          - gridcell [ref=f3e3566]:
+                            - textbox "Modified by" [ref=f3e3573]: "16121"
+                          - gridcell [ref=f3e3574]:
+                            - textbox "Modified by" [ref=f3e3581]: Venkatesh C
+                          - gridcell [ref=f3e3582]:
+                            - textbox "Rejected by" [ref=f3e3589]
+                          - gridcell [ref=f3e3590]:
+                            - textbox "External receipt number" [ref=f3e3597]
+                          - gridcell [ref=f3e3598]:
+                            - checkbox "Payment Sent" [ref=f3e3604]:
+                              - generic "No" [ref=f3e3605]
+                          - gridcell [ref=f3e3609]:
+                            - textbox "Workflow Status" [ref=f3e3615] [cursor=pointer]: Draft
+                    - row [ref=f3e3619]:
+                      - generic:
+                        - generic [ref=f3e3621]:
+                          - gridcell [ref=f3e3622]:
+                            - checkbox "Select or unselect row" [ref=f3e3623] [cursor=pointer]
+                          - gridcell [ref=f3e3627]:
+                            - status "The row is up to date." [ref=f3e3628]
+                        - generic [ref=f3e3632]:
+                          - gridcell [ref=f3e3633]:
+                            - textbox "Journal batch number" [ref=f3e3640] [cursor=pointer]: REL-013234
+                          - gridcell [ref=f3e3641]:
+                            - textbox "Name" [ref=f3e3648]: ARBR
+                          - gridcell [ref=f3e3649]:
+                            - textbox "Description" [ref=f3e3656]: Customers Receipt
+                          - gridcell [ref=f3e3657]:
+                            - checkbox "Posted" [ref=f3e3663]:
+                              - generic "No" [ref=f3e3664]
+                          - gridcell [ref=f3e3667]:
+                            - textbox "Posted on" [ref=f3e3674]
+                          - gridcell [ref=f3e3675]:
+                            - checkbox "Log" [ref=f3e3681]:
+                              - generic "No" [ref=f3e3682]
+                          - gridcell [ref=f3e3685]:
+                            - img "In use No image" [ref=f3e3691]
+                          - gridcell [ref=f3e3693]:
+                            - textbox "In use by" [ref=f3e3700]
+                          - gridcell [ref=f3e3701]:
+                            - textbox "Modified by" [ref=f3e3708]: "920"
+                          - gridcell [ref=f3e3709]:
+                            - textbox "Modified by" [ref=f3e3716]: Srinivas P G
+                          - gridcell [ref=f3e3717]:
+                            - textbox "Rejected by" [ref=f3e3724]
+                          - gridcell [ref=f3e3725]:
+                            - textbox "External receipt number" [ref=f3e3732]
+                          - gridcell [ref=f3e3733]:
+                            - checkbox "Payment Sent" [ref=f3e3739]:
+                              - generic "No" [ref=f3e3740]
+                          - gridcell [ref=f3e3744]:
+                            - textbox "Workflow Status" [ref=f3e3750] [cursor=pointer]: Draft
+            - text:  

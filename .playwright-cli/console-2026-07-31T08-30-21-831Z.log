@@ -1,0 +1,2 @@
+[    1990ms] [INFO] build: %s %s 7.0.26110.2 retail @ https://sobhauat.sandbox.operations.dynamics.com/?cmp=rel&mi=LedgerJournalTable_CustPaym:4989
+[    2028ms] [ERROR] The data-dyn-container needs to be set when both the template and the target have children @ https://sobhauat.sandbox.operations.dynamics.com/Scripts/dyn-core.min-7.0.26110.2.js:0

@@ -873,6 +873,28 @@ def _resolve_journal_row_index(page, row_index: int) -> int:
 
 
 def _click_pasted_journal_account_cell(page, row_index: int) -> bool:
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    row_count = rows.count()
+    if row_count:
+        if row_count <= row_index:
+            return False
+        row = rows.nth(row_index)
+        account_cell = row.locator(
+            '[role="gridcell"][id$="-LedgerJournalTrans_AccountNum"]'
+        )
+        if account_cell.count():
+            cell_id = account_cell.first.get_attribute("id") or "(no id)"
+            _scroll_journal_row_into_view(row)
+            try:
+                account_cell.first.click(timeout=5000)
+            except PlaywrightError:
+                account_cell.first.click(force=True, timeout=5000)
+            print(
+                f"Activated journal row {row_index + 1} via Account cell {cell_id}."
+            )
+            return True
+        return False
+
     return page.evaluate(
         """
         (rowIndex) => {
@@ -936,7 +958,11 @@ def _click_pasted_journal_account_cell(page, row_index: int) -> bool:
 def _pasted_account_field_for_row(page, row_index: int):
     rows = _journal_line_rows(page)
     if rows.count() > row_index:
-        for sel in (_ACCOUNT_INPUT_SEL, "input[id^='LedgerJournalTrans_AccountNum_']"):
+        for sel in (
+            f"{_ACCOUNT_INPUT_SEL}:not([readonly])",
+            _ACCOUNT_INPUT_SEL,
+            "input[id^='LedgerJournalTrans_AccountNum_']",
+        ):
             field = rows.nth(row_index).locator(sel)
             if field.count():
                 return field.first
@@ -1014,19 +1040,6 @@ def _activate_journal_row_for_paste(page, row_index: int) -> None:
 
             const dateInputSel = 'input[aria-label="Date"], input[aria-label="Value date"]';
             const accountSel = "input[id^='LedgerJournalTrans_AccountNum_'][id$='_input']";
-            const xpathFor = (el) => {
-                const parts = [];
-                while (el && el.nodeType === Node.ELEMENT_NODE) {
-                    const tag = el.tagName.toLowerCase();
-                    const sameTag = el.parentElement
-                        ? [...el.parentElement.children].filter((child) => child.tagName === el.tagName)
-                        : [];
-                    const suffix = sameTag.length > 1 ? `[${sameTag.indexOf(el) + 1}]` : '';
-                    parts.unshift(`${tag}${suffix}`);
-                    el = el.parentElement;
-                }
-                return `/${parts.join('/')}`;
-            };
 
             const grid = [...document.querySelectorAll('[role="grid"]')]
                 .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
@@ -1042,28 +1055,13 @@ def _activate_journal_row_for_paste(page, row_index: int) -> None:
                         || tr.querySelector(accountSel);
                 });
 
-            const rows = trs.map((tr, index) => {
-                const dateInput = tr.querySelector(dateInputSel);
-                const accountInput = tr.querySelector(accountSel);
-                return {
-                    number: index + 1,
-                    xpath: xpathFor(tr),
-                    id: tr.id || '',
-                    ariaRowIndex: tr.getAttribute('aria-rowindex') || '',
-                    selected: tr.getAttribute('aria-selected') || tr.getAttribute('aria-current') || '',
-                    date: dateInput ? (dateInput.value || dateInput.getAttribute('title') || '') : '',
-                    account: accountInput
-                        ? (accountInput.value || accountInput.getAttribute('title') || '')
-                        : '',
-                };
-            });
             const result = (ok, via, reason = '') => ({
                 ok,
                 via,
                 reason,
                 count: trs.length,
-                target: rows[rowIndex] || null,
-                rows,
+                rowId: trs[rowIndex]?.id || '',
+                ariaRowIndex: trs[rowIndex]?.getAttribute('aria-rowindex') || '',
             });
             const row = trs[rowIndex];
             if (!row) return result(false, '', 'row-missing');
@@ -1121,24 +1119,10 @@ def _activate_journal_row_for_paste(page, row_index: int) -> None:
         row_index,
     )
     if isinstance(clicked, dict):
-        rows = clicked.get("rows") or []
-        if row_index == 1:
-            print(f"Journal row XPath map before row 2 re-paste ({len(rows)} candidates):")
-            for row in rows:
-                print(
-                    f"  Row XPath {row.get('number')}/{len(rows)}: {row.get('xpath')} "
-                    f"| id={row.get('id') or '-'} "
-                    f"| aria-rowindex={row.get('ariaRowIndex') or '-'} "
-                    f"| selected={row.get('selected') or 'false'} "
-                    f"| Date={row.get('date') or '(blank)'} "
-                    f"| Account={row.get('account') or '(blank)'}"
-                )
-        target = clicked.get("target")
-        if target:
+        if clicked.get("rowId"):
             print(
-                f"Requested journal row {row_index + 1} matched XPath: {target.get('xpath')} "
-                f"| candidate {target.get('number')}/{clicked.get('count')} "
-                f"| aria-rowindex={target.get('ariaRowIndex') or '-'}"
+                f"Requested journal row {row_index + 1} matched D365 row "
+                f"{clicked.get('rowId')} (aria-rowindex={clicked.get('ariaRowIndex') or '-'})."
             )
     if not isinstance(clicked, dict) or not clicked.get("ok"):
         count = clicked.get("count", 0) if isinstance(clicked, dict) else 0
@@ -1366,7 +1350,7 @@ def _fill_text_field(locator, value: str) -> None:
         locator.click(force=True, timeout=10000)
     locator.press("ControlOrMeta+a")
     locator.press("Backspace")
-    locator.fill(str(value))
+    locator.fill(str(value), timeout=10000)
     locator.press("Tab")
 
 
@@ -2333,13 +2317,16 @@ def _save_journal_grid(page, label: str) -> None:
 
 def _activate_pasted_account_field(page, row_index: int):
     _wait_for_journal_grid_idle(page)
-    for _ in range(30):
-        if _click_pasted_journal_account_cell(page, row_index):
-            page.wait_for_timeout(150)
-            field = _pasted_account_field_for_row(page, row_index)
-            if field is not None:
-                return field
-        page.wait_for_timeout(150)
+    for _ in range(3):
+        if not _click_pasted_journal_account_cell(page, row_index):
+            continue
+        if _confirm_unsaved_changes_dialog(page, wait_ms=500):
+            _wait_for_journal_grid_idle(page)
+            continue
+        page.wait_for_timeout(250)
+        field = _pasted_account_field_for_row(page, row_index)
+        if field is not None and field.is_editable():
+            return field
     details = page.evaluate(
         """
         () => ({
@@ -2355,7 +2342,8 @@ def _activate_pasted_account_field(page, row_index: int):
                 id: el.id || '',
                 role: el.getAttribute('role') || '',
                 aria: el.getAttribute('aria-label') || '',
-                control: el.getAttribute('data-dyn-controlname') || ''
+                control: el.getAttribute('data-dyn-controlname') || '',
+                readonly: Boolean(el.readOnly)
             })),
             headers: [...document.querySelectorAll('th,[role="columnheader"]')]
                 .slice(0, 30).map((el) => (el.innerText || '').trim()),
@@ -2393,19 +2381,7 @@ def _fill_account_lookup(locator, value: str) -> None:
 
 
 def _account_field_at_row(page, row_index: int):
-    _click_pasted_journal_account_cell(page, row_index)
-    page.wait_for_timeout(150)
-    try:
-        return _journal_field_at_row(
-            page,
-            row_index,
-            css='input[id^="LedgerJournalTrans_AccountNum_"][id$="_input"]',
-        )
-    except (PlaywrightError, RuntimeError):
-        field = _pasted_account_field_for_row(page, row_index)
-        if field is None:
-            raise RuntimeError(f"Could not locate Account field for row {row_index + 1}.")
-        return field
+    return _activate_pasted_account_field(page, row_index)
 
 
 def _read_account_at_row(page, row_index: int) -> str:
@@ -2570,7 +2546,7 @@ def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: 
             "Missing account in source row(s): " + ", ".join(missing_source_rows)
         )
 
-    repaired = 0
+    repaired_indices = []
     for index, record in enumerate(records):
         expected = str(record["account"]).strip()
 
@@ -2585,18 +2561,8 @@ def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: 
         print(f"Row {index + 1}: Account was blank after paste; typing it directly.")
         typed_ok = _type_pasted_account(page, record, index)
         if typed_ok:
-            # Save immediately so D365 commits the lookup before we move on
-            _wait_for_journal_grid_idle(page)
-            _dismiss_d365_validation_dialog(page)
-            _save_journal_grid(page, f"after account repair row {index + 1}")
-            _wait_for_journal_grid_idle(page)
-            # Re-verify account stuck after save
-            actual = _read_account_at_row(page, index)
-            if _account_matches(actual, expected):
-                print(f"Row {index + 1}: Account confirmed after save.")
-                repaired += 1
-                continue
-            print(f"Row {index + 1}: Account lost after save; falling through to re-paste.")
+            repaired_indices.append(index)
+            continue
 
         print(f"Row {index + 1}: typed Account did not stick; re-pasting the row.")
         # Dismiss validation dialogs before re-paste attempt
@@ -2604,23 +2570,27 @@ def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: 
         _wait_for_journal_grid_idle(page)
         _repaste_pasted_row(page, record, index, col_defs, use_live_order=use_live_order)
 
-        # Save after re-paste so D365 commits the lookup
-        _wait_for_journal_grid_idle(page)
-        _dismiss_d365_validation_dialog(page)
-        _save_journal_grid(page, f"after account re-paste row {index + 1}")
-        _wait_for_journal_grid_idle(page)
+        repaired_indices.append(index)
 
+    if not repaired_indices:
+        return 0
+
+    _wait_for_journal_grid_idle(page)
+    _dismiss_d365_validation_dialog(page)
+    _save_journal_grid(page, "after Account repairs")
+    _wait_for_journal_grid_idle(page)
+    for index in repaired_indices:
+        expected = str(records[index]["account"]).strip()
         actual = _read_account_at_row(page, index)
         if not _account_matches(actual, expected):
             raise RuntimeError(
                 f"D365 kept Account '{actual or '(blank)'}' instead of '{expected}' "
                 f"in pasted row {index + 1}."
             )
-        repaired += 1
+        print(f"Row {index + 1}: Account confirmed after save.")
 
-    if repaired:
-        print(f"Repaired {repaired} Account field(s) after bulk paste.")
-    return repaired
+    print(f"Repaired {len(repaired_indices)} Account field(s) after bulk paste.")
+    return len(repaired_indices)
 
 
 def _read_method_of_payment_at_row(page, row_index: int) -> str:
@@ -2639,6 +2609,22 @@ def _read_method_of_payment_at_row(page, row_index: int) -> str:
                 return st.display !== 'none' && st.visibility !== 'hidden'
                     && r.width > 0 && r.height > 0;
             };
+
+            const grid = [...document.querySelectorAll('[role="grid"]')]
+                .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
+            const gridRows = grid
+                ? [...grid.querySelectorAll('[role="row"][id*="-row-"]')].filter(visible)
+                : [];
+            const gridRow = gridRows[rowIndex];
+            const gridCell = gridRow && [...gridRow.querySelectorAll('[role="gridcell"]')]
+                .find((el) => el.id.endsWith('-LedgerJournalTrans_PaymMode1'));
+            if (gridCell) {
+                const input = gridCell.querySelector(
+                    'input[aria-label="Method of payment"]:not([id^="Sel_"])'
+                );
+                const value = (input?.value || '').trim();
+                return value || (gridCell.innerText || '').trim();
+            }
 
             // Find column index from header
             const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
@@ -2684,50 +2670,6 @@ def _read_method_of_payment_at_row(page, row_index: int) -> str:
     return str(value or "").strip()
 
 
-def _click_journal_method_of_payment_cell(page, row_index: int) -> bool:
-    """Click the Method of Payment cell for a given row to activate its input."""
-    return page.evaluate(
-        """
-        (rowIndex) => {
-            const visible = (el) => {
-                if (!el) return false;
-                const st = window.getComputedStyle(el);
-                const r = el.getBoundingClientRect();
-                return st.display !== 'none' && st.visibility !== 'hidden'
-                    && r.width > 0 && r.height > 0;
-            };
-
-            const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
-            const header = headers.find(h =>
-                (h.innerText || '').trim() === 'Method of payment'
-            );
-            if (!header) return false;
-
-            const headerRow = header.closest('tr,[role="row"]');
-            if (!headerRow) return false;
-            const colIndex = [...headerRow.children].indexOf(header);
-            if (colIndex < 0) return false;
-
-            let scope = header.parentElement;
-            while (scope && !scope.querySelector('tbody tr')) scope = scope.parentElement;
-            if (!scope) return false;
-
-            const rows = [...scope.querySelectorAll('tbody tr')].filter(visible);
-            const row = rows[rowIndex];
-            if (!row) return false;
-
-            const cell = row.children[colIndex];
-            if (!cell) return false;
-
-            cell.scrollIntoView({ block: 'center', inline: 'center' });
-            cell.click();
-            return true;
-        }
-        """,
-        row_index,
-    )
-
-
 def _repair_missing_pasted_method_of_payment(page, records) -> int:
     """Re-fill Method of Payment for rows where bulk paste left it blank."""
     # Wait for the grid to be ready — it may have reloaded after account repair saves
@@ -2762,9 +2704,8 @@ def _repair_missing_pasted_method_of_payment(page, records) -> int:
             print(f"Row {index + 1}: Method of payment '{actual}' does not match expected '{expected}'; retyping.")
 
         try:
-            # Activate the row by clicking its Account cell (proven to work)
-            _click_pasted_journal_account_cell(page, index)
-            page.wait_for_timeout(500)
+            # D365 renders editable lookup inputs only for the active row.
+            _activate_pasted_account_field(page, index)
             _wait_for_journal_grid_idle(page)
 
             # After activation, only the active row has inputs rendered.
@@ -2781,15 +2722,14 @@ def _repair_missing_pasted_method_of_payment(page, records) -> int:
             print(f"Row {index + 1}: typed Method of payment '{expected}'.")
             repaired += 1
 
-            # Save after each repair so D365 commits the lookup
-            _wait_for_journal_grid_idle(page)
-            _dismiss_d365_validation_dialog(page)
-            _save_journal_grid(page, f"after method of payment repair row {index + 1}")
-            _wait_for_journal_grid_idle(page)
         except Exception as err:
             print(f"Row {index + 1}: Warning: Could not fill Method of payment '{expected}': {err}")
 
     if repaired:
+        _wait_for_journal_grid_idle(page)
+        _dismiss_d365_validation_dialog(page)
+        _save_journal_grid(page, "after Method of payment repairs")
+        _wait_for_journal_grid_idle(page)
         print(f"Repaired {repaired} Method of payment field(s) after bulk paste.")
     return repaired
 
@@ -2833,27 +2773,11 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     try:
         _wait_for_journal_grid_ready(page, timeout_ms=15000)
     except PlaywrightTimeoutError:
-        print("Warning: Journal grid not fully ready before row re-paste; continuing.")
-
-    _gate_if_validation_issue(page)
-    print(f"Bulk paste applied for {len(records)} rows; re-pasting rows 2..{len(records)} one at a time.")
-
-    for index in range(1, len(records)):
-        _gate_if_validation_issue(page)
-        print(f"Row {index + 1}/{len(records)}: single-row paste only.")
-        _repaste_pasted_row(page, records[index], index, ordered_cols, use_live_order=True)
-        _wait_for_journal_grid_idle(page)
-        _dismiss_d365_validation_dialog(page)
-        _gate_if_validation_issue(page)
-        if not _confirm_unsaved_changes_dialog(page, wait_ms=2000):
-            _save_journal_grid(page, f"after row {index + 1} re-paste")
-        _wait_for_journal_grid_idle(page)
-        if index < len(records) - 1:
-            _gate_if_validation_issue(page)
+        print("Warning: Journal grid not fully ready before lookup repair; continuing.")
 
     _gate_if_validation_issue(page)
 
-    print("Checking Account and Method of payment fields after paste.")
+    print("Bulk paste saved; repairing lookup fields directly by D365 row.")
     _wait_for_journal_grid_idle(page)
     try:
         _wait_for_journal_grid_ready(page, timeout_ms=10000)
