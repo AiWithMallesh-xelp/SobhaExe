@@ -1,4 +1,4 @@
-MSI build log 2026-07-31T09:00:50.5346359+00:00
+MSI build log 2026-07-31T10:11:30.2508398+00:00
 Source directory: D:\a\SobhaExe\SobhaExe\release\sobha-app (2057 files)
 
 === dotnet tool install wix 5.0.2 ===
@@ -25,4 +25,4 @@ exit code: 0
 === wix build ===
 > C:\Users\runneradmin\.dotnet\tools\wix.exe build D:\a\SobhaExe\SobhaExe\installer\sobha.wxs -ext WixToolset.UI.wixext -arch x64 -d SourceDir=D:\a\SobhaExe\SobhaExe\release\sobha-app -o D:\a\SobhaExe\SobhaExe\release\sobha-setup.msi
 exit code: 0
-MSI build successful: D:\a\SobhaExe\SobhaExe\release\sobha-setup.msi (286.7 MB)
+MSI build successful: D:\a\SobhaExe\SobhaExe\release\sobha-setup.msi (286.8 MB)
