@@ -1027,6 +1027,32 @@ def _journal_line_row_at_exact(page, row_index: int):
 
 def _activate_journal_row_for_paste(page, row_index: int) -> None:
     """Click an inactive journal row so D365 renders Date/Account inputs, then focus Date."""
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    row_count = rows.count()
+    if row_count:
+        if row_count <= row_index:
+            raise RuntimeError(
+                f"Could not activate journal row {row_index + 1} "
+                f"(visible data rows: {row_count})."
+            )
+        row = rows.nth(row_index)
+        date_cell = row.locator(
+            '[role="gridcell"][id$="-LedgerJournalTrans_TransDate"]'
+        )
+        if not date_cell.count():
+            raise RuntimeError(
+                f"Could not find Date cell for journal row {row_index + 1}."
+            )
+        cell_id = date_cell.first.get_attribute("id") or "(no id)"
+        _scroll_journal_row_into_view(row)
+        try:
+            date_cell.first.click(timeout=5000)
+        except PlaywrightError:
+            date_cell.first.click(force=True, timeout=5000)
+        print(f"Activated journal row {row_index + 1} via Date cell {cell_id}.")
+        page.wait_for_timeout(150)
+        return
+
     clicked = page.evaluate(
         """
         (rowIndex) => {
@@ -1172,12 +1198,18 @@ def _journal_field_at_row(page, row_index: int, *, aria_label: str | None = None
 def _focus_journal_row_at(page, row_index: int) -> None:
     row = _journal_line_row_at_exact(page, row_index)
     _scroll_journal_row_into_view(row)
+    if page.locator(_JOURNAL_DATA_ROW_SEL).count():
+        date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
+        date_input.wait_for(state="visible", timeout=8000)
+        date_input.click(timeout=5000)
+        page.keyboard.press("Home")
+        return
+
     for sel in ('input[aria-label="Date"]:not([readonly])', 'input[aria-label="Date"]'):
         date_input = row.locator(sel)
         if date_input.count():
-            date_input.first.evaluate(
-                "el => { el.scrollIntoView({ block: 'center', inline: 'start' }); el.focus(); el.click(); }"
-            )
+            date_input.first.scroll_into_view_if_needed(timeout=5000)
+            date_input.first.click(timeout=5000)
             page.wait_for_timeout(150)
             try:
                 page.keyboard.press("Home")
@@ -2480,18 +2512,24 @@ def _read_journal_grid_headers(page) -> list[str]:
 
 
 def _repaste_pasted_row(page, record, row_index: int, col_defs, *, use_live_order: bool = False) -> None:
-    _activate_journal_row_for_paste(page, row_index)
+    for _ in range(3):
+        _activate_journal_row_for_paste(page, row_index)
+        if _confirm_unsaved_changes_dialog(page, wait_ms=500):
+            _wait_for_journal_grid_idle(page)
+            continue
+        break
+    else:
+        raise RuntimeError(f"Could not activate journal row {row_index + 1} for paste.")
+
+    _focus_journal_row_at(page, row_index)
     page.wait_for_timeout(200)
     _set_page_clipboard(
         page,
         build_paste_clipboard_text([record], col_defs, use_live_order=use_live_order),
     )
     page.keyboard.press("ControlOrMeta+v")
-    page.wait_for_timeout(400)
-    expected = str(record.get("account", "")).strip()
-    if expected:
-        _wait_for_account_lookup(page, row_index, expected, timeout_ms=8000)
-    print(f"Row {row_index + 1}: pasted single row only.")
+    page.wait_for_timeout(750)
+    print(f"Row {row_index + 1}: pasted complete row.")
 
 
 def _read_pasted_account(account_field) -> str:
@@ -2533,6 +2571,47 @@ def _account_matches(actual: str, expected: str) -> bool:
 
     expected_key = strip(expected)
     return bool(expected_key) and expected_key in strip(actual)
+
+
+def _method_of_payment_matches(actual: str, expected: str) -> bool:
+    actual = str(actual or "").strip().casefold()
+    expected = str(expected or "").strip().casefold()
+    return not expected or bool(actual) and (
+        actual == expected.split()[0] or expected.startswith(actual)
+    )
+
+
+def _pasted_row_issues(page, record, row_index: int) -> list[str]:
+    issues = []
+    expected_account = str(record.get("account", "")).strip()
+    actual_account = _read_account_at_row(page, row_index)
+    if not _account_matches(actual_account, expected_account):
+        issues.append(
+            f"Account '{actual_account or '(blank)'}' instead of '{expected_account}'"
+        )
+
+    expected_method = str(record.get("method_of_payment", "")).strip()
+    actual_method = _read_method_of_payment_at_row(page, row_index)
+    if not _method_of_payment_matches(actual_method, expected_method):
+        issues.append(
+            f"Method of payment '{actual_method or '(blank)'}' instead of "
+            f"'{expected_method}'"
+        )
+    return issues
+
+
+def _wait_for_pasted_row_issues(
+    page,
+    record,
+    row_index: int,
+    timeout_ms: int = 5000,
+) -> list[str]:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        issues = _pasted_row_issues(page, record, row_index)
+        if not issues or time.monotonic() >= deadline:
+            return issues
+        page.wait_for_timeout(500)
 
 
 def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: bool = False) -> int:
@@ -2691,12 +2770,9 @@ def _repair_missing_pasted_method_of_payment(page, records) -> int:
 
         # Read cell text via JS (works without activating the row)
         actual = _read_method_of_payment_at_row(page, index)
-        if actual:
-            # D365 may store just the code (e.g. "Wire") vs full "Wire Wire Transfer"
-            if (actual.casefold() == expected.split()[0].casefold()
-                    or expected.casefold().startswith(actual.casefold())):
-                print(f"Row {index + 1}: Method of payment already set to '{actual}'.")
-                continue
+        if _method_of_payment_matches(actual, expected):
+            print(f"Row {index + 1}: Method of payment already set to '{actual}'.")
+            continue
 
         if not actual:
             print(f"Row {index + 1}: Method of payment was blank after paste; typing it directly.")
@@ -2773,18 +2849,62 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     try:
         _wait_for_journal_grid_ready(page, timeout_ms=15000)
     except PlaywrightTimeoutError:
-        print("Warning: Journal grid not fully ready before lookup repair; continuing.")
+        print("Warning: Journal grid not fully ready before complete row re-paste; continuing.")
 
     _gate_if_validation_issue(page)
 
-    print("Bulk paste saved; repairing lookup fields directly by D365 row.")
-    _wait_for_journal_grid_idle(page)
-    try:
-        _wait_for_journal_grid_ready(page, timeout_ms=10000)
-    except PlaywrightTimeoutError:
-        pass
-    _repair_missing_pasted_accounts(page, records, ordered_cols, use_live_order=True)
-    _repair_missing_pasted_method_of_payment(page, records)
+    print("Bulk paste saved; re-pasting rows 2 onward and saving each row before advancing.")
+    for index in range(1, len(records)):
+        _gate_if_validation_issue(page)
+        _repaste_pasted_row(
+            page,
+            records[index],
+            index,
+            ordered_cols,
+            use_live_order=True,
+        )
+        _wait_for_journal_grid_idle(page)
+        _dismiss_d365_validation_dialog(page)
+        _save_journal_grid(page, f"after complete row {index + 1} re-paste")
+        _wait_for_journal_grid_idle(page)
+
+    retry_indices = []
+    for index, record in enumerate(records):
+        issues = _wait_for_pasted_row_issues(page, record, index)
+        if issues:
+            print(
+                f"Row {index + 1}: incomplete after save ({'; '.join(issues)}); "
+                "scheduling one complete-row retry."
+            )
+            retry_indices.append(index)
+        else:
+            print(f"Row {index + 1}: Account and Method of payment confirmed after save.")
+
+    if not retry_indices:
+        return
+
+    for index in retry_indices:
+        _gate_if_validation_issue(page)
+        _repaste_pasted_row(
+            page,
+            records[index],
+            index,
+            ordered_cols,
+            use_live_order=True,
+        )
+        _wait_for_journal_grid_idle(page)
+        _dismiss_d365_validation_dialog(page)
+        _save_journal_grid(page, f"after one-time row {index + 1} retry")
+        _wait_for_journal_grid_idle(page)
+
+    for index in retry_indices:
+        issues = _wait_for_pasted_row_issues(page, records[index], index)
+        if issues:
+            raise RuntimeError(
+                f"D365 row {index + 1} remained incomplete after one retry: "
+                + "; ".join(issues)
+            )
+        print(f"Row {index + 1}: complete row confirmed after one retry.")
 
 
 def _process_bulk_paste_chunks(page, records, col_defs):
