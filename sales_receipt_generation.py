@@ -16,7 +16,53 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", p("pw-browsers"))
 # ────────────────────────────────────────────────────────────────────────────
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox, simpledialog
+
+
+def _create_startup_splash():
+    if __name__ != "__main__":
+        return None
+    try:
+        splash = tk.Tk()
+        splash.overrideredirect(True)
+        splash.configure(bg="#5E5453")
+        splash.attributes("-topmost", True)
+
+        frame = tk.Frame(splash, bg="#5E5453", padx=42, pady=30)
+        frame.pack(fill="both", expand=True)
+        tk.Label(
+            frame,
+            text="Sobha Reconciliation",
+            bg="#5E5453",
+            fg="white",
+            font=("Segoe UI", 16, "bold"),
+        ).pack()
+        tk.Label(
+            frame,
+            text="Starting...",
+            bg="#5E5453",
+            fg="#D2D5DB",
+            font=("Segoe UI", 10),
+        ).pack(pady=(8, 14))
+        progress = ttk.Progressbar(frame, mode="indeterminate", length=260)
+        progress.pack()
+        progress.start(12)
+        splash._startup_progress = progress
+
+        splash.update_idletasks()
+        width, height = splash.winfo_width(), splash.winfo_height()
+        x = (splash.winfo_screenwidth() - width) // 2
+        y = (splash.winfo_screenheight() - height) // 2
+        splash.geometry(f"+{x}+{y}")
+        splash.update()
+        return splash
+    except Exception:
+        return None
+
+
+_startup_splash = _create_startup_splash()
+
 import json
 import os
 import math
@@ -55,6 +101,22 @@ except Exception as err:
     automation_module = None
     AUTOMATION_IMPORT_ERROR = err
 
+def _is_horizontal_scroll_event(event) -> bool:
+    """True for trackpad horizontal swipe / Shift+wheel.
+
+    macOS Tk delivers two-finger left/right swipes as MouseWheel with the
+    Shift bit set (state & 1), which is the same signal as Shift-MouseWheel.
+    See: https://stackoverflow.com/q/46194948 and https://stackoverflow.com/q/78331442
+    """
+    state = int(getattr(event, "state", 0) or 0)
+    if state & 0x1:
+        return True
+    # Linux touchpad horizontal edge scroll uses button 6/7.
+    if getattr(event, "num", None) in (6, 7):
+        return True
+    return False
+
+
 def _calc_scroll_delta(event) -> int:
     """Return scroll units from a MouseWheel / Button-4/5 event.
 
@@ -64,6 +126,10 @@ def _calc_scroll_delta(event) -> int:
     if getattr(event, "num", None) == 4:
         return -1
     elif getattr(event, "num", None) == 5:
+        return 1
+    elif getattr(event, "num", None) == 6:
+        return -1
+    elif getattr(event, "num", None) == 7:
         return 1
 
     d = getattr(event, "delta", 0)
@@ -81,8 +147,11 @@ def _calc_scroll_delta(event) -> int:
         units = max(-5, min(5, units))
         return -units   # negate: positive dy (up in Cocoa) → scroll up (negative yview)
     elif sys.platform == "darwin":
-        # Tk 8.6 macOS: delta is ±1..±N directly
-        return -1 if d > 0 else 1
+        # Tk 8.6 macOS: delta is ±1..±N directly — keep magnitude for smooth trackpad.
+        units = int(-d)
+        if units == 0:
+            units = -1 if d > 0 else 1
+        return max(-8, min(8, units))
     else:
         # Windows / Linux: delta is ±120 per notch
         return int(d / -120) or (-1 if d > 0 else 1)
@@ -90,13 +159,15 @@ def _calc_scroll_delta(event) -> int:
 # Detect Tk 9.0 + macOS Aqua — tk.Button(relief="flat", bg=...) is non-functional
 _IS_AQUA_TK9 = False
 try:
-    _probe = tk.Tk()
-    _probe.withdraw()
+    _probe = _startup_splash or tk.Tk()
+    if _startup_splash is None:
+        _probe.withdraw()
     _IS_AQUA_TK9 = (
         _probe.tk.call("tk", "windowingsystem") == "aqua"
         and float(tk.TkVersion) >= 9.0
     )
-    _probe.destroy()
+    if _startup_splash is None:
+        _probe.destroy()
     del _probe
 except Exception:
     pass
@@ -298,6 +369,27 @@ DISPLAY_COL_DEFS = [
     ("reference_date", "Reference Date"),
     ("payment_reference", "Payment Reference"),
 ]
+
+DISPLAY_COL_WIDTHS = {
+    "value_date": 108,
+    "account": 148,
+    "credit": 118,
+    "offset_account": 196,
+    "method_of_payment": 136,
+    "reference_date": 108,
+    # Wide enough that typical windows need horizontal scroll to see full refs.
+    "payment_reference": 900,
+}
+
+TABLE_EDITABLE_KEYS = frozenset({
+    "value_date",
+    "reference_date",
+    "account",
+    "credit",
+    "offset_account",
+    "method_of_payment",
+    "payment_reference",
+})
 
 # ---------------------------------------------------------------------------
 # Clipboard Column Settings Dialog
@@ -1052,6 +1144,296 @@ class ProfessionalTable(tk.Frame):
             self.body_canvas.xview_scroll(delta, "units")
 
 
+class ScrollableTransactionTable(tk.Frame):
+    """Scrollable grid for batch transactions with fixed-width columns."""
+
+    ROW_HEIGHT = 36
+    HEADER_HEIGHT = 34
+    MAX_VISIBLE_ROWS = 7
+    PAYMENT_REF_MIN = 520
+    PAYMENT_REF_MAX = 1400
+
+    def __init__(self, parent, col_defs, colors, *args, **kwargs):
+        super().__init__(parent, bg=colors["table_shell_bg"], *args, **kwargs)
+        self.col_defs = list(col_defs)
+        self.colors = colors
+        self._record_count = 0
+        self._cell_font = tkfont.Font(family="Segoe UI", size=10)
+        self._content_width = self._calc_content_width(self.col_defs)
+
+        self.h_scroll = tk.Scrollbar(self, orient="horizontal", command=self._scroll_x, width=16)
+        self.v_scroll = tk.Scrollbar(self, orient="vertical", command=self._scroll_y, width=16)
+
+        self.header_canvas = tk.Canvas(
+            self,
+            height=self.HEADER_HEIGHT,
+            bg=colors["table_header_bg"],
+            highlightthickness=0,
+            xscrollcommand=self.h_scroll.set,
+        )
+        self.body_canvas = tk.Canvas(
+            self,
+            bg=colors["table_shell_bg"],
+            highlightthickness=0,
+            xscrollcommand=self.h_scroll.set,
+            yscrollcommand=self.v_scroll.set,
+        )
+
+        self.header_frame = tk.Frame(self.header_canvas, bg=colors["table_header_bg"])
+        self.body_frame = tk.Frame(self.body_canvas, bg=colors["table_shell_bg"])
+        self._header_window = self.header_canvas.create_window((0, 0), window=self.header_frame, anchor="nw")
+        self._body_window = self.body_canvas.create_window((0, 0), window=self.body_frame, anchor="nw")
+
+        self._build_header()
+
+        self.header_canvas.grid(row=0, column=0, sticky="ew")
+        self.body_canvas.grid(row=1, column=0, sticky="nsew")
+        self.v_scroll.grid(row=1, column=1, sticky="ns")
+        self.h_scroll.grid(row=2, column=0, sticky="ew")
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.body_frame.bind("<Configure>", self._on_body_configure)
+        self.header_frame.bind("<Configure>", self._on_header_configure)
+        self.body_canvas.bind("<Configure>", self._on_canvas_resize)
+        self._bind_table_scroll(self)
+
+    @staticmethod
+    def _calc_content_width(col_defs) -> int:
+        return sum(width for _key, _label, width in col_defs) + (len(col_defs) * 14)
+
+    def _configure_columns(self, parent_frame):
+        for col_idx, (_key, _label, width) in enumerate(self.col_defs):
+            parent_frame.grid_columnconfigure(col_idx, minsize=width, weight=0)
+
+    def _bind_table_scroll(self, widget):
+        """Bind wheel/swipe on every child so Entry widgets cannot eat horizontal swipe."""
+        widget.bind("<MouseWheel>", self._on_table_scroll, add="+")
+        widget.bind(
+            "<Shift-MouseWheel>",
+            lambda e: self._on_table_scroll(e, force_horizontal=True),
+            add="+",
+        )
+        widget.bind("<Button-4>", self._on_table_scroll, add="+")
+        widget.bind("<Button-5>", self._on_table_scroll, add="+")
+        widget.bind("<Button-6>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
+        widget.bind("<Button-7>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
+        widget.bind(
+            "<Shift-Button-4>",
+            lambda e: self._on_table_scroll(e, force_horizontal=True),
+            add="+",
+        )
+        widget.bind(
+            "<Shift-Button-5>",
+            lambda e: self._on_table_scroll(e, force_horizontal=True),
+            add="+",
+        )
+        for child in widget.winfo_children():
+            self._bind_table_scroll(child)
+
+    def _on_table_scroll(self, event, force_horizontal: bool = False):
+        horizontal = force_horizontal or _is_horizontal_scroll_event(event)
+        if horizontal:
+            self.try_scroll_horizontal(event)
+            return "break"
+        if self.try_scroll_vertical(event):
+            return "break"
+        return None
+
+    def _build_header(self):
+        for child in self.header_frame.winfo_children():
+            child.destroy()
+        self._configure_columns(self.header_frame)
+        for col_idx, (_key, label, width) in enumerate(self.col_defs):
+            cell = tk.Frame(
+                self.header_frame,
+                width=width,
+                bg=self.colors["table_header_bg"],
+            )
+            cell.grid(row=0, column=col_idx, padx=(6, 8), pady=4, sticky="nsw")
+            cell.grid_propagate(False)
+            tk.Label(
+                cell,
+                text=label,
+                bg=self.colors["table_header_bg"],
+                fg=self.colors["muted"],
+                font=("Segoe UI", 8, "bold"),
+                anchor="w",
+            ).pack(fill="both", expand=True)
+
+    def _widen_payment_reference(self, records):
+        """Grow Payment Reference column so full text is reachable via h-scroll."""
+        pay_width = DISPLAY_COL_WIDTHS.get("payment_reference", self.PAYMENT_REF_MIN)
+        for record in records:
+            text = str(record.get("payment_reference", "") or "")
+            pay_width = max(pay_width, self._cell_font.measure(text) + 28)
+        pay_width = max(self.PAYMENT_REF_MIN, min(self.PAYMENT_REF_MAX, pay_width))
+
+        updated = []
+        for key, label, width in self.col_defs:
+            if key == "payment_reference":
+                updated.append((key, label, pay_width))
+            else:
+                updated.append((key, label, width))
+        self.col_defs = updated
+        self._content_width = self._calc_content_width(self.col_defs)
+        self._build_header()
+
+    def populate_rows(self, records, row_vars_list, row_key_fn):
+        self._record_count = len(records)
+        self._widen_payment_reference(records)
+        for child in self.body_frame.winfo_children():
+            child.destroy()
+
+        for row_index, record in enumerate(records):
+            row_key = row_key_fn(record)
+            row_widgets = {
+                "data": record,
+                "row_key": row_key,
+                "uuid": tk.StringVar(value=str(record.get("uuid", ""))),
+                "batch_id": tk.StringVar(value=str(record.get("batch_id", ""))),
+                "sub_batch_id": tk.StringVar(value=str(record.get("sub_batch_id", ""))),
+            }
+            for key, _label, _width in self.col_defs:
+                value = str(record.get(key, ""))
+                if key in DATE_FIELD_KEYS:
+                    value = format_d365_date(value)
+                    record[key] = value
+                row_widgets[key] = tk.StringVar(value=value)
+            row_vars_list.append(row_widgets)
+
+            row_bg = (
+                self.colors["row_bg_even"]
+                if row_index % 2 == 0
+                else self.colors["row_bg_odd"]
+            )
+            row_frame = tk.Frame(self.body_frame, bg=row_bg)
+            row_frame.pack(fill="x", anchor="nw")
+            self._configure_columns(row_frame)
+
+            for col_idx, (key, _label, width) in enumerate(self.col_defs):
+                cell = tk.Frame(row_frame, width=width, height=self.ROW_HEIGHT - 4, bg=row_bg)
+                cell.grid(row=0, column=col_idx, padx=(6, 8), pady=2, sticky="nsew")
+                cell.grid_propagate(False)
+                if key in TABLE_EDITABLE_KEYS:
+                    entry = tk.Entry(
+                        cell,
+                        textvariable=row_widgets[key],
+                        relief="flat",
+                        bd=0,
+                        highlightthickness=0,
+                        bg=row_bg,
+                        fg=self.colors["text"],
+                        insertbackground=self.colors["text"],
+                        font=self._cell_font,
+                    )
+                    entry.pack(fill="both", expand=True)
+                else:
+                    tk.Label(
+                        cell,
+                        textvariable=row_widgets[key],
+                        bg=row_bg,
+                        fg=self.colors["text"],
+                        font=self._cell_font,
+                        anchor="w",
+                    ).pack(fill="both", expand=True)
+
+            if row_index < len(records) - 1:
+                tk.Frame(self.body_frame, height=1, bg=self.colors["row_sep"]).pack(fill="x")
+
+        visible_rows = max(1, min(len(records), self.MAX_VISIBLE_ROWS))
+        body_height = (visible_rows * self.ROW_HEIGHT) + max(0, len(records) - 1)
+        self.body_canvas.configure(height=body_height)
+        if len(records) > self.MAX_VISIBLE_ROWS:
+            self.v_scroll.grid(row=1, column=1, sticky="ns")
+        else:
+            self.v_scroll.grid_remove()
+        self._sync_canvas_widths()
+        self._refresh_scroll_regions()
+        self._update_h_scroll_visibility()
+        self._bind_table_scroll(self.body_frame)
+
+    def _needs_vertical_scroll(self) -> bool:
+        return self._record_count > self.MAX_VISIBLE_ROWS
+
+    def _needs_horizontal_scroll(self) -> bool:
+        viewport = max(self.body_canvas.winfo_width(), 1)
+        if viewport <= 1:
+            return True
+        return self._content_width > viewport + 2
+
+    def try_scroll_vertical(self, event) -> bool:
+        if not self._needs_vertical_scroll():
+            return False
+        delta = _calc_scroll_delta(event)
+        if delta == 0:
+            return False
+        self.body_canvas.yview_scroll(delta, "units")
+        return True
+
+    def try_scroll_horizontal(self, event) -> bool:
+        delta = _calc_scroll_delta(event)
+        if delta == 0:
+            return False
+        scrolled = False
+        if self._needs_horizontal_scroll():
+            self.header_canvas.xview_scroll(delta, "units")
+            self.body_canvas.xview_scroll(delta, "units")
+            scrolled = True
+        # Fallback: long text clipped inside a focused Entry cell.
+        widget = event.widget
+        if isinstance(widget, tk.Entry):
+            try:
+                widget.xview_scroll(delta, "units")
+                scrolled = True
+            except tk.TclError:
+                pass
+        return scrolled
+
+    def _scroll_x(self, *args):
+        self.header_canvas.xview(*args)
+        self.body_canvas.xview(*args)
+
+    def _scroll_y(self, *args):
+        self.body_canvas.yview(*args)
+
+    def _on_canvas_resize(self, event):
+        self._sync_canvas_widths(event.width)
+        self._update_h_scroll_visibility()
+
+    def _sync_canvas_widths(self, viewport_width=None):
+        viewport_width = viewport_width or max(self.body_canvas.winfo_width(), 1)
+        self.header_canvas.itemconfigure(self._header_window, width=self._content_width)
+        self.body_canvas.itemconfigure(self._body_window, width=self._content_width)
+        try:
+            self.header_canvas.configure(width=max(viewport_width, 1))
+        except tk.TclError:
+            pass
+
+    def _update_h_scroll_visibility(self):
+        # Keep bar visible so users can always discover horizontal scroll.
+        self.h_scroll.grid(row=2, column=0, sticky="ew")
+
+    def _refresh_scroll_regions(self):
+        self.body_canvas.update_idletasks()
+        self.header_canvas.update_idletasks()
+        content_h = max(self.body_frame.winfo_reqheight(), 1)
+        self.body_canvas.configure(scrollregion=(0, 0, self._content_width, content_h))
+        self.header_canvas.configure(
+            scrollregion=(0, 0, self._content_width, self.HEADER_HEIGHT)
+        )
+
+    def _on_body_configure(self, _event=None):
+        self._refresh_scroll_regions()
+        self._update_h_scroll_visibility()
+
+    def _on_header_configure(self, _event=None):
+        self.header_canvas.configure(
+            scrollregion=(0, 0, self._content_width, self.HEADER_HEIGHT)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Main Application
 # ---------------------------------------------------------------------------
@@ -1089,6 +1471,8 @@ class Application(tk.Tk):
         self._auth_probe_serial = 0
         self._session_anim_serial = 0
         self._login_display_name: Optional[str] = None
+        self._busy_dialog: Optional[tk.Toplevel] = None
+        self._automation_controller = None
         self.clipboard_col_defs = load_clipboard_col_defs()
         self.bulk_paste_mode_var = tk.BooleanVar(value=self._load_bulk_paste_mode_default())
 
@@ -1354,13 +1738,15 @@ class Application(tk.Tk):
         cards_host.grid_rowconfigure(0, weight=1)
         cards_host.grid_columnconfigure(0, weight=1)
 
+        self.cards_host = cards_host
+        self._cards_scroll_depth = 0
         self.cards_canvas = tk.Canvas(
             cards_host,
             bg=self.colors["page_bg"],
             highlightthickness=0,
             bd=0,
         )
-        cards_scroll = tk.Scrollbar(cards_host, orient="vertical", command=self.cards_canvas.yview)
+        cards_scroll = tk.Scrollbar(cards_host, orient="vertical", command=self.cards_canvas.yview, width=16)
         self.cards_canvas.configure(yscrollcommand=cards_scroll.set)
 
         self.cards_canvas.grid(row=0, column=0, sticky="nsew")
@@ -1370,9 +1756,8 @@ class Application(tk.Tk):
         self.cards_canvas_window_id = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
         self.cards_frame.bind("<Configure>", self._on_cards_frame_configure)
         self.cards_canvas.bind("<Configure>", self._on_cards_canvas_configure)
-        self.bind_all("<MouseWheel>", self._on_cards_mousewheel)
-        self.bind_all("<Button-4>", self._on_cards_mousewheel)
-        self.bind_all("<Button-5>", self._on_cards_mousewheel)
+        cards_host.bind("<Enter>", self._activate_cards_scroll, add="+")
+        cards_host.bind("<Leave>", self._deactivate_cards_scroll, add="+")
 
         # Footer Status Bar
         footer = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=18, pady=8)
@@ -1608,6 +1993,8 @@ class Application(tk.Tk):
                 self.header_actions.pack(side="right")
             if self.app_view:
                 self.app_view.pack(fill="both", expand=True)
+            if getattr(self, "cards_host", None) and self._cards_scroll_depth == 0:
+                self.after_idle(self._activate_cards_scroll)
             self._set_session_status_display(True, self._login_display_name)
         else:
             if self.app_view:
@@ -1734,6 +2121,50 @@ class Application(tk.Tk):
             detail = f"{detail}\n\nClick Login and sign in again."
         messagebox.showerror("Session Expired", detail)
 
+    def _activate_cards_scroll(self, _event=None):
+        self._cards_scroll_depth += 1
+        if self._cards_scroll_depth != 1:
+            return
+        self.bind_all("<MouseWheel>", self._on_cards_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._on_cards_mousewheel, add="+")
+        self.bind_all("<Button-5>", self._on_cards_mousewheel, add="+")
+        self.bind_all(
+            "<Shift-MouseWheel>",
+            lambda e: self._on_cards_mousewheel(e, force_horizontal=True),
+            add="+",
+        )
+        self.bind_all(
+            "<Shift-Button-4>",
+            lambda e: self._on_cards_mousewheel(e, force_horizontal=True),
+            add="+",
+        )
+        self.bind_all(
+            "<Shift-Button-5>",
+            lambda e: self._on_cards_mousewheel(e, force_horizontal=True),
+            add="+",
+        )
+
+    def _deactivate_cards_scroll(self, _event=None):
+        self._cards_scroll_depth = max(0, self._cards_scroll_depth - 1)
+        if self._cards_scroll_depth != 0:
+            return
+        for sequence in (
+            "<MouseWheel>",
+            "<Button-4>",
+            "<Button-5>",
+            "<Shift-MouseWheel>",
+            "<Shift-Button-4>",
+            "<Shift-Button-5>",
+        ):
+            self.unbind_all(sequence)
+
+    def _find_transaction_table(self, widget):
+        while widget is not None:
+            if isinstance(widget, ScrollableTransactionTable):
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
     def _refresh_cards_canvas(self, _event=None):
         if not self.cards_canvas or not self.cards_frame:
             return
@@ -1755,9 +2186,34 @@ class Application(tk.Tk):
 
     # Scroll is now permanently bound at init — no Enter/Leave needed
 
-    def _on_cards_mousewheel(self, event):
-        if not self.cards_canvas:
+    def _on_cards_mousewheel(self, event, force_horizontal: bool = False):
+        if not self.cards_canvas or not self.cards_canvas.winfo_ismapped():
             return
+
+        pointer_widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        if pointer_widget is None:
+            return
+        inside_cards = False
+        widget = pointer_widget
+        while widget is not None:
+            if widget == self.cards_host:
+                inside_cards = True
+                break
+            widget = getattr(widget, "master", None)
+        if not inside_cards:
+            return
+
+        # Horizontal trackpad swipe must never drive vertical page scroll.
+        if force_horizontal or _is_horizontal_scroll_event(event):
+            table = self._find_transaction_table(pointer_widget)
+            if table is not None:
+                table.try_scroll_horizontal(event)
+            return
+
+        table = self._find_transaction_table(pointer_widget)
+        if table is not None and table.try_scroll_vertical(event):
+            return
+
         delta = _calc_scroll_delta(event)
         if delta != 0:
             self.cards_canvas.yview_scroll(delta, "units")
@@ -2189,17 +2645,8 @@ class Application(tk.Tk):
                 self.row_count_label.config(text="0 batches | 0 sub-batches")
             return
 
-        col_weights = {
-            "value_date": 1,
-            "account": 1,
-            "credit": 1,
-            "offset_account": 2,
-            "method_of_payment": 1,
-            "reference_date": 1,
-            "payment_reference": 3,
-        }
         col_defs = [
-            (key, label, col_weights.get(key, 1))
+            (key, label, DISPLAY_COL_WIDTHS.get(key, 140))
             for key, label in DISPLAY_COL_DEFS
         ]
 
@@ -2335,70 +2782,13 @@ class Application(tk.Tk):
                     font=("Segoe UI", 9, "bold"),
                 ).pack(side="right", padx=(0, 4))
 
-                table = tk.Frame(sub_card, bg=self.colors["table_shell_bg"], bd=0)
-                table.pack(fill="x", padx=4, pady=(8, 2))
-
-                header_row = tk.Frame(table, bg=self.colors["table_header_bg"], pady=4)
-                header_row.pack(fill="x")
-                for col_idx, (_key, label, weight) in enumerate(col_defs):
-                    header_row.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
-                    tk.Label(
-                        header_row,
-                        text=label,
-                        bg=self.colors["table_header_bg"],
-                        fg=self.colors["muted"],
-                        font=("Segoe UI", 8, "bold"),
-                        anchor="w",
-                    ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(2, 2))
-
-                for row_index, record in enumerate(sub_rows):
-                    row_key = self._row_key(record)
-                    row_widgets = {
-                        "data": record,
-                        "row_key": row_key,
-                        "uuid": tk.StringVar(value=str(record.get("uuid", ""))),
-                        "batch_id": tk.StringVar(value=str(record.get("batch_id", ""))),
-                        "sub_batch_id": tk.StringVar(value=str(record.get("sub_batch_id", ""))),
-                    }
-                    for key in KEY_MAP[2:]:
-                        value = str(record.get(key, ""))
-                        if key in DATE_FIELD_KEYS:
-                            value = format_d365_date(value)
-                            record[key] = value
-                        row_widgets[key] = tk.StringVar(value=value)
-                    self.row_vars.append(row_widgets)
-
-                    row_bg = self.colors["row_bg_even"] if row_index % 2 == 0 else self.colors["row_bg_odd"]
-                    row_frame = tk.Frame(table, bg=row_bg)
-                    row_frame.pack(fill="x")
-                    for col_idx, (key, _label, weight) in enumerate(col_defs):
-                        row_frame.grid_columnconfigure(col_idx, weight=weight, uniform="batch_cols")
-                        if key in {"value_date", "reference_date", "account", "credit", "offset_account", "method_of_payment", "payment_reference"}:
-                            entry = tk.Entry(
-                                row_frame,
-                                textvariable=row_widgets[key],
-                                relief="flat",
-                                bd=0,
-                                highlightthickness=0,
-                                bg=row_bg,
-                                fg=self.colors["text"],
-                                insertbackground=self.colors["text"],
-                                font=("Segoe UI", 11),
-                            )
-                            entry.grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(6, 6))
-                        else:
-                            tk.Label(
-                                row_frame,
-                                textvariable=row_widgets[key],
-                                bg=row_bg,
-                                fg=self.colors["text"],
-                                font=("Segoe UI", 11),
-                                anchor="w",
-                            ).grid(row=0, column=col_idx, sticky="ew", padx=(6, 8), pady=(7, 7))
-
-                    if row_index < len(sub_rows) - 1:
-                        sep = tk.Frame(table, height=1, bg=self.colors["row_sep"])
-                        sep.pack(fill="x")
+                scroll_table = ScrollableTransactionTable(
+                    sub_card,
+                    col_defs,
+                    self.colors,
+                )
+                scroll_table.pack(fill="x", padx=4, pady=(8, 2))
+                scroll_table.populate_rows(sub_rows, self.row_vars, self._row_key)
 
         if self.row_count_label:
             self.row_count_label.config(
@@ -2672,6 +3062,60 @@ class Application(tk.Tk):
         except Exception as err:
             messagebox.showerror("Export Error", f"Failed to export: {err}")
 
+    def _show_automation_loader(self):
+        self._hide_automation_loader()
+        dialog = tk.Toplevel(self)
+        self._busy_dialog = dialog
+        dialog.title("Starting Automation")
+        dialog.resizable(False, False)
+        dialog.configure(bg=self.colors["white"])
+        dialog.transient(self)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        body = tk.Frame(dialog, bg=self.colors["white"], padx=34, pady=26)
+        body.pack(fill="both", expand=True)
+        tk.Label(
+            body,
+            text="Starting automation...",
+            bg=self.colors["white"],
+            fg=self.colors["dark_text"],
+            font=("Segoe UI", 12, "bold"),
+        ).pack()
+        tk.Label(
+            body,
+            text="Preparing D365 and your selected transactions",
+            bg=self.colors["white"],
+            fg=self.colors["secondary_text"],
+            font=("Segoe UI", 9),
+        ).pack(pady=(6, 14))
+        progress = ttk.Progressbar(body, mode="indeterminate", length=300)
+        progress.pack(fill="x")
+        progress.start(12)
+        dialog._busy_progress = progress
+
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+
+    def _hide_automation_loader(self):
+        dialog = self._busy_dialog
+        self._busy_dialog = None
+        if dialog is None or not dialog.winfo_exists():
+            return
+        try:
+            dialog._busy_progress.stop()
+            dialog.grab_release()
+        except tk.TclError:
+            pass
+        dialog.destroy()
+
+    def _finish_automation_ui(self, callback=None):
+        self._hide_automation_loader()
+        if callback:
+            callback()
+
     def _submit_selection(self):
         self._sync_current_edits()
         selected_group = self._selected_batch_group()
@@ -2707,6 +3151,7 @@ class Application(tk.Tk):
                 return
             bulk_mode = self.bulk_paste_mode_var.get()
             col_defs = list(self.clipboard_col_defs)
+            self._show_automation_loader()
             threading.Thread(
                 target=self._run_automation,
                 args=(selected, bulk_mode, col_defs),
@@ -2973,45 +3418,65 @@ class Application(tk.Tk):
             if automation_module is None:
                 raise ImportError(f"automation module import failed: {AUTOMATION_IMPORT_ERROR}")
             print("--- Automation Started ---")
+            self._automation_controller = automation_module.AutomationController()
             automation_module.test_final8(
                 data,
                 bulk_paste_mode=bulk_paste_mode,
                 clipboard_col_defs=clipboard_col_defs,
+                controller=self._automation_controller,
             )
             print("--- Automation Finished ---")
             if bulk_paste_mode:
                 self.after(
                     0,
+                    self._finish_automation_ui,
                     lambda: messagebox.showinfo(
-                        "Success",
-                        "All transactions completed.\nBrowser left open — close it when done.",
+                        "Success", "All transactions completed.\nBrowser left open — close it when done."
                     ),
                 )
             else:
-                self.after(
-                    0,
-                    lambda: messagebox.showinfo("Success", "Automation completed successfully."),
-                )
+                self.after(0, self._finish_automation_ui, lambda: messagebox.showinfo(
+                    "Success", "Automation completed successfully."
+                ))
         except ImportError:
-            self.after(0, lambda: messagebox.showerror(
-                "Error", "automation module not found."))
+            self.after(
+                0,
+                self._finish_automation_ui,
+                lambda: messagebox.showerror("Error", "automation module not found."),
+            )
         except Exception as e:
             if e.__class__.__name__ == "AutomationStoppedByUser":
                 print(f"Automation stopped by user: {e}")
-                self.after(0, lambda err=e: messagebox.showinfo(
-                    "Automation Stopped", f"{err}"))
+                self.after(
+                    0,
+                    self._finish_automation_ui,
+                    lambda: messagebox.showinfo("Automation Stopped", "Automation was cancelled."),
+                )
                 return
             session_expired_type = getattr(automation_module, "SessionExpiredError", None)
             if session_expired_type and isinstance(e, session_expired_type):
                 print(f"Automation session expired: {e}")
-                self.after(0, lambda err=e: self._handle_session_expired(err))
+                self.after(
+                    0,
+                    self._finish_automation_ui,
+                    lambda err=e: self._handle_session_expired(err),
+                )
                 return
             print(f"Automation error: {e}")
             if self._is_missing_playwright_browser_error(e):
-                self.after(0, lambda err=e: self._offer_browser_download(err, "Automation"))
+                self.after(
+                    0,
+                    self._finish_automation_ui,
+                    lambda err=e: self._offer_browser_download(err, "Automation"),
+                )
             else:
-                self.after(0, lambda err=e: messagebox.showerror(
-                    "Error", f"Automation failed:\n{err}"))
+                self.after(
+                    0,
+                    self._finish_automation_ui,
+                    lambda err=e: messagebox.showerror("Error", f"Automation failed:\n{err}"),
+                )
+        finally:
+            self._automation_controller = None
 
     def _run_login_automation(self):
         if not self._bootstrap_login_config_if_needed():
@@ -3041,5 +3506,11 @@ class Application(tk.Tk):
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    if _startup_splash is not None:
+        try:
+            _startup_splash._startup_progress.stop()
+            _startup_splash.destroy()
+        except tk.TclError:
+            pass
     app = Application()
     app.mainloop()

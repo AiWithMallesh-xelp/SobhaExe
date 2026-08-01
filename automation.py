@@ -555,6 +555,202 @@ class AutomationStoppedByUser(RuntimeError):
     pass
 
 
+class AutomationController:
+    """Thread-safe browser controls for a single automation run."""
+
+    def __init__(self):
+        self._paused = threading.Event()
+        self._quit = threading.Event()
+        self._lock = threading.Lock()
+        self._started_at = time.monotonic()
+        self._paused_at = None
+        self._paused_seconds = 0.0
+        self._completed = False
+        self._completed_at = None
+        self._page = None
+        self._bridge_attached = False
+
+    def _status_locked(self) -> dict:
+        end_time = self._completed_at or self._paused_at or time.monotonic()
+        elapsed = max(0, int(end_time - self._started_at - self._paused_seconds))
+        return {
+            "paused": self._paused.is_set(),
+            "completed": self._completed,
+            "quitting": self._quit.is_set(),
+            "elapsedSeconds": elapsed,
+        }
+
+    def request(self, action: str) -> dict:
+        with self._lock:
+            if action == "pause" and not self._completed and not self._quit.is_set() and not self._paused.is_set():
+                self._paused_at = time.monotonic()
+                self._paused.set()
+            elif action == "resume" and self._paused.is_set() and not self._quit.is_set():
+                self._paused_seconds += time.monotonic() - self._paused_at
+                self._paused_at = None
+                self._paused.clear()
+            elif action == "quit":
+                self._quit.set()
+            return self._status_locked()
+
+    def complete(self) -> None:
+        with self._lock:
+            if not self._completed:
+                self._completed = True
+                self._completed_at = time.monotonic()
+
+    def status(self) -> dict:
+        with self._lock:
+            return self._status_locked()
+
+    def checkpoint(self) -> None:
+        if self._quit.is_set():
+            raise AutomationStoppedByUser("Automation stopped by user.")
+
+    @property
+    def quit_requested(self) -> bool:
+        return self._quit.is_set()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def attach_page(self, page) -> None:
+        self._page = page
+        if not self._bridge_attached:
+            page.expose_function("automationControl", self.request)
+            self._bridge_attached = True
+        self.show_controls(page)
+
+    def show_controls(self, page=None) -> None:
+        page = page or self._page
+        if page is None or page.is_closed():
+            return
+        page.evaluate(
+            """
+            (initialStatus) => {
+                const existing = document.getElementById('automation-run-controls');
+                if (existing && existing.__updateAutomationControls) {
+                    existing.__updateAutomationControls(initialStatus);
+                    return;
+                }
+
+                const panel = document.createElement('div');
+                panel.id = 'automation-run-controls';
+                panel.setAttribute('role', 'group');
+                panel.setAttribute('aria-label', 'Automation controls');
+                Object.assign(panel.style, {
+                    position: 'fixed', right: '24px', bottom: '24px', zIndex: '2147483647',
+                    display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'rgba(255,255,255,0.98)',
+                    border: '1px solid rgba(17,24,39,0.16)', borderRadius: '8px',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+                    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+                });
+
+                const makeButton = (label, background) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = label;
+                    Object.assign(button.style, {
+                        padding: '9px 12px', border: '0', borderRadius: '6px', background,
+                        color: '#fff', fontWeight: '700', fontSize: '13px', cursor: 'pointer'
+                    });
+                    return button;
+                };
+
+                const pauseButton = makeButton('Force Stop', '#b45309');
+                const quitButton = makeButton('Quit', '#dc2626');
+                const timer = document.createElement('span');
+                const status = document.createElement('span');
+                Object.assign(timer.style, { color: '#0f172a', fontSize: '13px', fontVariantNumeric: 'tabular-nums' });
+                Object.assign(status.style, { color: '#475569', fontSize: '12px', fontWeight: '700' });
+                let elapsedSeconds = 0;
+                let runningSince = performance.now();
+                let timerRunning = false;
+
+                const renderTimer = () => {
+                    const hours = Math.floor(elapsedSeconds / 3600);
+                    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+                    const seconds = elapsedSeconds % 60;
+                    timer.textContent = [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':');
+                };
+                const applyStatus = (next) => {
+                    if (!next) return;
+                    if (Number.isFinite(next.elapsedSeconds)) elapsedSeconds = next.elapsedSeconds;
+                    runningSince = performance.now();
+                    timerRunning = !next.paused && !next.completed && !next.quitting;
+                    panel.dataset.paused = next.paused ? 'true' : 'false';
+                    pauseButton.textContent = next.paused ? 'Resume' : 'Force Stop';
+                    pauseButton.style.background = next.paused ? '#16a34a' : '#b45309';
+                    pauseButton.hidden = Boolean(next.completed || next.quitting);
+                    status.textContent = next.completed ? 'Automation completed' : next.quitting ? 'Quitting...' : next.paused ? 'Paused' : 'Running';
+                    quitButton.disabled = Boolean(next.quitting);
+                    if (next.quitting) quitButton.textContent = 'Quitting...';
+                    renderTimer();
+                };
+                const send = (action) => {
+                    if (typeof window.automationControl !== 'function') return;
+                    Promise.resolve(window.automationControl(action)).then(applyStatus).catch(() => {});
+                };
+                pauseButton.addEventListener('click', () => {
+                    const paused = panel.dataset.paused === 'true';
+                    applyStatus({ paused: !paused, completed: false, quitting: false, elapsedSeconds });
+                    send(paused ? 'resume' : 'pause');
+                });
+                quitButton.addEventListener('click', () => {
+                    applyStatus({ paused: false, completed: false, quitting: true, elapsedSeconds });
+                    send('quit');
+                });
+                panel.__updateAutomationControls = applyStatus;
+                setInterval(() => {
+                    if (!timerRunning) return;
+                    const elapsedNow = Math.floor((performance.now() - runningSince) / 1000);
+                    if (elapsedNow) {
+                        elapsedSeconds += elapsedNow;
+                        runningSince += elapsedNow * 1000;
+                        renderTimer();
+                    }
+                }, 250);
+                panel.append(timer, status, pauseButton, quitButton);
+                document.body.appendChild(panel);
+                applyStatus(initialStatus);
+            }
+            """,
+            self.status(),
+        )
+
+    def cleanup(self) -> None:
+        page = self._page
+        self._page = None
+        if page is None or page.is_closed():
+            return
+        try:
+            page.evaluate("document.getElementById('automation-run-controls')?.remove()")
+        except PlaywrightError:
+            pass
+
+
+def _automation_checkpoint(page, controller: AutomationController | None) -> None:
+    if controller is None:
+        return
+    while True:
+        controller.show_controls(page)
+        controller.checkpoint()
+        if not controller.paused:
+            return
+        # Keep Playwright's event loop active so the browser can deliver Resume/Quit.
+        page.wait_for_timeout(200)
+
+
+def _wait_for_automation_condition(page, expression: str, controller: AutomationController | None) -> None:
+    """Poll a page condition so pause and quit work during user-controlled waits."""
+    while True:
+        _automation_checkpoint(page, controller)
+        if page.evaluate(f"() => Boolean({expression})"):
+            return
+        page.wait_for_timeout(200)
+
+
 class SessionExpiredError(RuntimeError):
     pass
 
@@ -1524,7 +1720,7 @@ def _read_d365_validation_issue(page) -> str | None:
     return cleaned or None
 
 
-def _wait_until_issue_resolved(page, issue_name: str) -> None:
+def _wait_until_issue_resolved(page, issue_name: str, controller: AutomationController | None = None) -> None:
     """Block until user clicks Yes on 'is it resolved?'. No re-shows the gate."""
     label = (issue_name or "").strip() or "Validation issue"
     print(f"Waiting for user to resolve issue: {label}")
@@ -1542,7 +1738,7 @@ def _wait_until_issue_resolved(page, issue_name: str) -> None:
                 Object.assign(wrap.style, {
                     position: 'fixed',
                     right: '24px',
-                    bottom: '24px',
+                    bottom: '86px',
                     zIndex: '2147483647',
                     width: 'min(420px, calc(100vw - 24px))',
                     boxSizing: 'border-box',
@@ -1627,7 +1823,7 @@ def _wait_until_issue_resolved(page, issue_name: str) -> None:
             """,
             label,
         )
-        page.wait_for_function("window.automationIssueResolved !== null", timeout=0)
+        _wait_for_automation_condition(page, "window.automationIssueResolved !== null", controller)
         decision = page.evaluate("window.automationIssueResolved")
         if decision == "yes":
             print(f"User confirmed issue resolved: {label}")
@@ -1639,12 +1835,12 @@ def _wait_until_issue_resolved(page, issue_name: str) -> None:
             label = refreshed
 
 
-def _gate_if_validation_issue(page) -> None:
+def _gate_if_validation_issue(page, controller: AutomationController | None = None) -> None:
     """If a D365 validation blocker is visible, wait until the user confirms Yes."""
     issue = _read_d365_validation_issue(page)
     if issue:
         print(f"D365 validation issue detected — showing resolution gate: {issue}")
-        _wait_until_issue_resolved(page, issue)
+        _wait_until_issue_resolved(page, issue, controller)
 
 
 def _finalize_journal_line_before_new(
@@ -1679,7 +1875,7 @@ def _finalize_journal_line_before_new(
     _dismiss_d365_validation_dialog(page)
 
 
-def _wait_for_post_click(page, *, show_notice=True):
+def _wait_for_post_click(page, *, show_notice=True, controller: AutomationController | None = None):
     page.evaluate(
         """
         ({ showNotice }) => {
@@ -1783,10 +1979,10 @@ def _wait_for_post_click(page, *, show_notice=True):
         """,
         {"showNotice": show_notice},
     )
-    page.wait_for_function("window.postClicked === true", timeout=0)
+    _wait_for_automation_condition(page, "window.postClicked === true", controller)
 
 
-def _wait_for_post_confirmation(page) -> str:
+def _wait_for_post_confirmation(page, controller: AutomationController | None = None) -> str:
     page.evaluate(
         """
         () => {
@@ -1888,29 +2084,29 @@ def _wait_for_post_confirmation(page) -> str:
         }
         """
     )
-    page.wait_for_function("window.automationPostDecision !== null", timeout=0)
+    _wait_for_automation_condition(page, "window.automationPostDecision !== null", controller)
     return page.evaluate("window.automationPostDecision")
 
 
-def _wait_for_post_and_confirmation(page, *, bulk=False):
+def _wait_for_post_and_confirmation(page, *, bulk=False, controller: AutomationController | None = None):
     if bulk:
-        _wait_for_bulk_post_click(page)
+        _wait_for_bulk_post_click(page, controller=controller)
     else:
-        _wait_for_post_click(page)
+        _wait_for_post_click(page, controller=controller)
 
     while True:
         print("User clicked Post. Waiting for continue confirmation...")
-        decision = _wait_for_post_confirmation(page)
+        decision = _wait_for_post_confirmation(page, controller)
         if decision == "continue":
             break
         print("User clicked Wait. Waiting for Post again...")
         if bulk:
-            _wait_for_bulk_post_click(page)
+            _wait_for_bulk_post_click(page, controller=controller)
         else:
-            _wait_for_post_click(page, show_notice=False)
+            _wait_for_post_click(page, show_notice=False, controller=controller)
 
 
-def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int, total_sub_batches: int) -> str:
+def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int, total_sub_batches: int, controller: AutomationController | None = None) -> str:
     button_text = "Close Window" if is_last_sub_batch else "Next Batch"
     action_value = "close" if is_last_sub_batch else "next"
     heading = (
@@ -2005,11 +2201,12 @@ def _wait_for_batch_action(page, *, is_last_sub_batch: bool, current_index: int,
             "body": body,
         },
     )
-    page.wait_for_function("window.automationBatchAction !== null", timeout=0)
+    _wait_for_automation_condition(page, "window.automationBatchAction !== null", controller)
     return page.evaluate("window.automationBatchAction")
 
 
-def _refresh_for_next_batch(page):
+def _refresh_for_next_batch(page, controller: AutomationController | None = None):
+    _automation_checkpoint(page, controller)
     print("Refreshing page for next batch...")
     try:
         page.keyboard.press("ControlOrMeta+r")
@@ -2018,6 +2215,7 @@ def _refresh_for_next_batch(page):
         print(f"Control+R refresh failed ({err}); using page.reload().")
         page.reload(timeout=CONFIG["page_load_timeout_ms"], wait_until="domcontentloaded")
     _wait_for_d365_ready(page, "refreshed page")
+    _automation_checkpoint(page, controller)
 
 
 def _return_to_journal_list(page) -> None:
@@ -2143,7 +2341,7 @@ def _show_bulk_paste_toast(page, duration_ms: int = 3000) -> None:
     )
 
 
-def _wait_for_bulk_post_click(page):
+def _wait_for_bulk_post_click(page, *, controller: AutomationController | None = None):
     page.evaluate(
         """
         () => {
@@ -2169,10 +2367,13 @@ def _wait_for_bulk_post_click(page):
         }
         """
     )
-    page.wait_for_function("window.postClicked === true", timeout=0)
+    _wait_for_automation_condition(page, "window.postClicked === true", controller)
 
 
-def _show_all_completed_overlay(page) -> None:
+def _show_all_completed_overlay(page, controller: AutomationController | None = None) -> None:
+    if controller is not None:
+        controller.complete()
+        controller.show_controls(page)
     page.evaluate(
         """
         () => {
@@ -2240,7 +2441,7 @@ def _show_all_completed_overlay(page) -> None:
         }
         """
     )
-    page.wait_for_function("window.automationAllCompleted === true", timeout=0)
+    _wait_for_automation_condition(page, "window.automationAllCompleted === true", controller)
 
 
 def _extract_chunk_voucher_values(page, chunk_size: int):
@@ -2810,7 +3011,8 @@ def _repair_missing_pasted_method_of_payment(page, records) -> int:
     return repaired
 
 
-def _paste_bulk_chunk(page, records, col_defs) -> None:
+def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController | None = None) -> None:
+    _automation_checkpoint(page, controller)
     if build_paste_clipboard_text is None or col_defs_from_live_headers is None:
         raise RuntimeError("clipboard_export module is not available.")
 
@@ -2840,7 +3042,7 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
 
     _wait_for_journal_grid_idle(page)
     _dismiss_d365_validation_dialog(page)
-    _gate_if_validation_issue(page)
+    _gate_if_validation_issue(page, controller)
     if not _confirm_unsaved_changes_dialog(page, wait_ms=2000):
         _save_journal_grid(page, "after bulk paste")
     else:
@@ -2851,11 +3053,12 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
     except PlaywrightTimeoutError:
         print("Warning: Journal grid not fully ready before complete row re-paste; continuing.")
 
-    _gate_if_validation_issue(page)
+    _gate_if_validation_issue(page, controller)
 
     print("Bulk paste saved; re-pasting rows 2 onward and saving each row before advancing.")
     for index in range(1, len(records)):
-        _gate_if_validation_issue(page)
+        _automation_checkpoint(page, controller)
+        _gate_if_validation_issue(page, controller)
         _repaste_pasted_row(
             page,
             records[index],
@@ -2884,7 +3087,8 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
         return
 
     for index in retry_indices:
-        _gate_if_validation_issue(page)
+        _automation_checkpoint(page, controller)
+        _gate_if_validation_issue(page, controller)
         _repaste_pasted_row(
             page,
             records[index],
@@ -2907,7 +3111,7 @@ def _paste_bulk_chunk(page, records, col_defs) -> None:
         print(f"Row {index + 1}: complete row confirmed after one retry.")
 
 
-def _process_bulk_paste_chunks(page, records, col_defs):
+def _process_bulk_paste_chunks(page, records, col_defs, controller: AutomationController | None = None):
     chunks = _chunk_records(records, BULK_PASTE_BATCH_SIZE)
     if not chunks:
         print("No records to process in bulk paste mode.")
@@ -2916,14 +3120,16 @@ def _process_bulk_paste_chunks(page, records, col_defs):
     all_processed = []
     total_chunks = len(chunks)
     for chunk_index, chunk in enumerate(chunks, start=1):
+        _automation_checkpoint(page, controller)
         print(
             f"Starting bulk paste chunk {chunk_index}/{total_chunks} "
             f"({len(chunk)} transactions)"
         )
-        _paste_bulk_chunk(page, chunk, col_defs)
+        _paste_bulk_chunk(page, chunk, col_defs, controller)
         _disable_automation_visual_overlays(page)
         _show_bulk_paste_toast(page, 3000)
-        _wait_for_post_and_confirmation(page, bulk=True)
+        _wait_for_post_and_confirmation(page, bulk=True, controller=controller)
+        _automation_checkpoint(page, controller)
 
         try:
             page.get_by_text("List General Payment fee Bank").click()
@@ -2949,23 +3155,26 @@ def _process_bulk_paste_chunks(page, records, col_defs):
                 is_last_sub_batch=False,
                 current_index=chunk_index,
                 total_sub_batches=total_chunks,
+                controller=controller,
             )
             if action == "close":
                 print("User closed bulk paste before next chunk.")
                 break
+            _automation_checkpoint(page, controller)
             _prepare_journal_lines_for_bulk_paste(page)
 
-    _show_all_completed_overlay(page)
+    _show_all_completed_overlay(page, controller)
     print(f"Bulk paste completed for {len(all_processed)} records.")
     return all_processed
 
 
-def _process_sub_batch(page, records):
+def _process_sub_batch(page, records, controller: AutomationController | None = None):
     iterated_records = []
     reuse_same_row_next = False
     manual_save_done = False
 
     for idx, record in enumerate(records):
+        _automation_checkpoint(page, controller)
         print(f"Processing record {idx + 1}/{len(records)}")
         force_manual_wipe_before_fill = False
         if idx > 0 and not reuse_same_row_next:
@@ -3287,7 +3496,11 @@ def _process_sub_batch(page, records):
                         }
                         """
                     )
-                    page.wait_for_function("window.automationFinalDuplicateSaveClicked === true", timeout=0)
+                    _wait_for_automation_condition(
+                        page,
+                        "window.automationFinalDuplicateSaveClicked === true",
+                        controller,
+                    )
                     page.evaluate(
                         """
                         () => {
@@ -3390,7 +3603,11 @@ def _process_sub_batch(page, records):
                     }
                     """
                 )
-                page.wait_for_function("window.automationAlreadyPostedDecision !== null", timeout=0)
+                _wait_for_automation_condition(
+                    page,
+                    "window.automationAlreadyPostedDecision !== null",
+                    controller,
+                )
                 decision = page.evaluate("window.automationAlreadyPostedDecision")
                 if decision == "close":
                     raise AutomationStoppedByUser("User closed automation during already-posted handling.")
@@ -3413,14 +3630,14 @@ def _process_sub_batch(page, records):
         page.get_by_role("button", name=" Save").click()
         print("Saved. Waiting for user to click Post...")
 
-    _wait_for_post_and_confirmation(page)
+    _wait_for_post_and_confirmation(page, controller=controller)
 
     processed_records = list(iterated_records)
     print(f"Continue confirmed. Proceeding with {len(processed_records)} records for bulk patch.")
     return processed_records
 
 
-def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
+def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None, controller: AutomationController | None = None):
     issues = get_config_issues(require_auth_state=True)
     if issues:
         raise ValueError("Configuration issue(s):\n- " + "\n- ".join(issues))
@@ -3478,6 +3695,9 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                 wait_until="domcontentloaded",
             )
             _wait_for_d365_ready(page)
+            if controller is not None:
+                controller.attach_page(page)
+            _automation_checkpoint(page, controller)
 
             if bulk_paste_mode:
                 if normalize_col_defs is None or build_paste_clipboard_text is None:
@@ -3502,18 +3722,19 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                             record["company"] = company
                     print(f"Bulk paste company: {company}")
                 _open_journal_lines(page)
-                _process_bulk_paste_chunks(page, records, col_defs)
+                _process_bulk_paste_chunks(page, records, col_defs, controller)
             else:
                 sub_batch_groups = _group_records_by_sub_batch(records)
                 print(f"Main batch {batch_id} contains {len(sub_batch_groups)} sub-batches.")
                 total_sub_batches = len(sub_batch_groups)
                 for sub_batch_index, (sub_batch_id, sub_batch_records) in enumerate(sub_batch_groups, start=1):
+                    _automation_checkpoint(page, controller)
                     print(
                         f"Starting sub-batch {sub_batch_index}/{total_sub_batches}: "
                         f"{sub_batch_id} ({len(sub_batch_records)} transactions)"
                     )
                     _open_journal_lines(page)
-                    processed_records = _process_sub_batch(page, sub_batch_records)
+                    processed_records = _process_sub_batch(page, sub_batch_records, controller)
 
                     if processed_records:
                         try:
@@ -3540,16 +3761,17 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                         is_last_sub_batch=is_last_sub_batch,
                         current_index=sub_batch_index,
                         total_sub_batches=total_sub_batches,
+                        controller=controller,
                     )
                     if action == "close":
                         break
-                    _refresh_for_next_batch(page)
+                    _refresh_for_next_batch(page, controller)
 
             _persist_storage_state(context)
         except Exception as err:
             automation_error = err
             print(f"Automation failed: {err}")
-            if keep_browser_open and browser is not None:
+            if keep_browser_open and browser is not None and not isinstance(err, AutomationStoppedByUser):
                 print("Automation failed — browser left open for inspection. Close it when done.")
                 try:
                     while browser.is_connected():
@@ -3564,19 +3786,25 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None):
                 print("Waiting for user to close the browser...")
                 try:
                     while browser.is_connected():
+                        _automation_checkpoint(page, controller)
                         if page is not None:
                             page.wait_for_timeout(1000)
                         else:
                             time.sleep(1)
+                except AutomationStoppedByUser as err:
+                    automation_error = err
                 except Exception:
                     pass
         finally:
-            if keep_browser_open:
+            quit_requested = bool(controller and controller.quit_requested)
+            if controller is not None:
+                controller.cleanup()
+            if keep_browser_open and not quit_requested:
                 if automation_error is not None:
                     print("Browser closed after automation failure.")
                 else:
                     print("Bulk paste completed — browser closed by user.")
-            else:
+            if not keep_browser_open or quit_requested:
                 if context is not None:
                     context.close()
                 if browser is not None:
