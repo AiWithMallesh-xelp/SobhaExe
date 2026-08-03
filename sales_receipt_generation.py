@@ -1171,8 +1171,10 @@ class ScrollableTransactionTable(tk.Frame):
             highlightthickness=0,
             xscrollcommand=self.h_scroll.set,
         )
+        # Explicit initial height — Windows collapses zero-height canvases inside pack(fill="x").
         self.body_canvas = tk.Canvas(
             self,
+            height=self.ROW_HEIGHT,
             bg=colors["table_shell_bg"],
             highlightthickness=0,
             xscrollcommand=self.h_scroll.set,
@@ -1187,12 +1189,12 @@ class ScrollableTransactionTable(tk.Frame):
         self._build_header()
 
         self.header_canvas.grid(row=0, column=0, sticky="ew")
-        self.body_canvas.grid(row=1, column=0, sticky="nsew")
+        # sticky=ew only — do not give body row weight=1 or Windows shrinks table to 0px.
+        self.body_canvas.grid(row=1, column=0, sticky="ew")
         self.v_scroll.grid(row=1, column=1, sticky="ns")
         self.h_scroll.grid(row=2, column=0, sticky="ew")
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
 
         self.body_frame.bind("<Configure>", self._on_body_configure)
         self.header_frame.bind("<Configure>", self._on_header_configure)
@@ -1354,10 +1356,13 @@ class ScrollableTransactionTable(tk.Frame):
             self.v_scroll.grid(row=1, column=1, sticky="ns")
         else:
             self.v_scroll.grid_remove()
+        self.update_idletasks()
         self._sync_canvas_widths()
         self._refresh_scroll_regions()
         self._update_h_scroll_visibility()
         self._bind_table_scroll(self.body_frame)
+        # Force outer cards canvas to remeasure after Windows geometry settle.
+        self.event_generate("<Configure>")
 
     def _needs_vertical_scroll(self) -> bool:
         return self._record_count > self.MAX_VISIBLE_ROWS
@@ -1516,7 +1521,11 @@ class Application(tk.Tk):
         # Initialize Forest Theme (fallback to default if missing)
         style = ttk.Style()
         try:
-            self.tk.call("source", "forest-light.tcl")
+            theme_path = p("forest-light.tcl")
+            if os.path.isfile(theme_path):
+                self.tk.call("source", theme_path)
+            else:
+                self.tk.call("source", "forest-light.tcl")
             style.theme_use("forest-light")
         except Exception:
             pass
