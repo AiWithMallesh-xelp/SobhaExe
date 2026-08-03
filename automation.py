@@ -1441,41 +1441,41 @@ def _journal_field_at_row(page, row_index: int, *, aria_label: str | None = None
     raise PlaywrightError(f"No journal field found for row {row_index + 1}.")
 
 
-def _focus_journal_row_at(page, row_index: int) -> None:
+def _focus_journal_row_at(page, row_index: int, aria_label: str = "Date") -> None:
     row = _journal_line_row_at_exact(page, row_index)
     _scroll_journal_row_into_view(row)
     if page.locator(_JOURNAL_DATA_ROW_SEL).count():
-        date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
+        field_input = row.locator(f'input[aria-label="{aria_label}"]:not([readonly])').first
         try:
-            date_input.wait_for(state="visible", timeout=4000)
+            field_input.wait_for(state="visible", timeout=4000)
         except PlaywrightTimeoutError:
             # Column likely scrolled out of view / virtualized away; reset horizontal
             # scroll to the Date column and give it one more chance before giving up.
             _scroll_journal_grid_to_start(page)
             row = _journal_line_row_at_exact(page, row_index)
             _scroll_journal_row_into_view(row)
-            date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
-            date_input.wait_for(state="visible", timeout=6000)
-        _click_locator_robust(date_input, page, label=f"Date input row {row_index + 1}")
+            field_input = row.locator(f'input[aria-label="{aria_label}"]:not([readonly])').first
+            field_input.wait_for(state="visible", timeout=6000)
+        _click_locator_robust(field_input, page, label=f"{aria_label} input row {row_index + 1}")
         page.keyboard.press("Home")
         return
 
-    for sel in ('input[aria-label="Date"]:not([readonly])', 'input[aria-label="Date"]'):
-        date_input = row.locator(sel)
-        if date_input.count():
-            target = date_input.first
+    for sel in (f'input[aria-label="{aria_label}"]:not([readonly])', f'input[aria-label="{aria_label}"]'):
+        field_input = row.locator(sel)
+        if field_input.count():
+            target = field_input.first
             try:
                 target.scroll_into_view_if_needed(timeout=5000)
             except PlaywrightError:
                 pass
-            _click_locator_robust(target, page, label=f"Date input row {row_index + 1}")
+            _click_locator_robust(target, page, label=f"{aria_label} input row {row_index + 1}")
             page.wait_for_timeout(150)
             try:
                 page.keyboard.press("Home")
             except PlaywrightError:
                 pass
             return
-    raise RuntimeError(f"Could not find Date field for pasted row {row_index + 1}.")
+    raise RuntimeError(f"Could not find {aria_label} field for pasted row {row_index + 1}.")
 
 
 def _journal_grid_row(page, row_index: int):
@@ -1659,15 +1659,16 @@ def _wait_for_journal_grid_ready(page, timeout_ms: int | None = None) -> None:
     page.wait_for_timeout(300)
 
 
-def _focus_journal_row_for_paste(page, row_index: int = 0) -> None:
-    """Focus the leftmost grid cell (Date column) so paste aligns with D365 column order."""
+def _focus_journal_row_for_paste(page, row_index: int = 0, anchor_label: str = "Date") -> None:
+    """Focus the leftmost grid cell (Date column by default) so paste aligns with D365 columns."""
     row = _journal_grid_row(page, row_index)
     _scroll_journal_row_into_view(row)
     resolved_index = _resolve_journal_row_index(page, row_index)
 
     clicked = page.evaluate(
         """
-        (rowIndex) => {
+        (args) => {
+            const { rowIndex, anchorLabel } = args;
             const isVisible = (el) => {
                 if (!el) return false;
                 const st = window.getComputedStyle(el);
@@ -1683,12 +1684,13 @@ def _focus_journal_row_for_paste(page, row_index: int = 0) -> None:
             const row = trs[rowIndex] || trs[0];
             if (!row) return false;
 
-            const dateInput = row.querySelector('input[aria-label="Date"]:not([readonly])')
-                || row.querySelector('input[aria-label="Date"]');
-            if (dateInput && isVisible(dateInput)) {
-                dateInput.scrollIntoView({ block: 'center', inline: 'start' });
-                dateInput.focus();
-                dateInput.click();
+            const escaped = anchorLabel.replace(/"/g, '\\\\"');
+            const anchorInput = row.querySelector(`input[aria-label="${escaped}"]:not([readonly])`)
+                || row.querySelector(`input[aria-label="${escaped}"]`);
+            if (anchorInput && isVisible(anchorInput)) {
+                anchorInput.scrollIntoView({ block: 'center', inline: 'start' });
+                anchorInput.focus();
+                anchorInput.click();
                 return true;
             }
 
@@ -1702,11 +1704,11 @@ def _focus_journal_row_for_paste(page, row_index: int = 0) -> None:
             return true;
         }
         """,
-        resolved_index,
+        {"rowIndex": resolved_index, "anchorLabel": anchor_label},
     )
 
     if not clicked:
-        for aria_label in ("Date", "Value date"):
+        for aria_label in (anchor_label, "Date", "Value date"):
             try:
                 field = _journal_field_locator(page, row_index, aria_label=aria_label)
                 field.click(timeout=5000)
@@ -2074,6 +2076,7 @@ def _repaste_and_save_row_with_retry(
     label = save_label or f"after complete row {row_index + 1} re-paste"
     attempt = 0
     pasted = False
+    value_date_filled = False
     grid_reset_attempts = 0
     max_grid_reset_attempts = 6
     while True:
@@ -2093,11 +2096,19 @@ def _repaste_and_save_row_with_retry(
                     use_live_order=use_live_order,
                 )
                 pasted = True
-                _wait_for_journal_grid_idle(page)
                 _dismiss_d365_validation_dialog(page)
-            _save_journal_grid(page, label)
-            _wait_for_journal_grid_idle(page)
+            _save_journal_grid(page, label, settle_ms=100)
             _dismiss_d365_validation_dialog(page)
+            if not value_date_filled and _value_date_needs_fill(page, record, row_index):
+                try:
+                    _activate_journal_row_for_paste(page, row_index)
+                    _confirm_unsaved_changes_dialog(page, wait_ms=500)
+                except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
+                    pass
+                _fill_value_date_at_row(page, record, row_index, force=True)
+                value_date_filled = True
+                _save_journal_grid(page, f"after row {row_index + 1} Value date", settle_ms=100)
+                _dismiss_d365_validation_dialog(page)
         except AutomationStoppedByUser:
             raise
         except (PlaywrightError, PlaywrightTimeoutError) as err:
@@ -2741,7 +2752,7 @@ def _extract_chunk_voucher_values(page, chunk_size: int):
     return voucher_values
 
 
-def _wait_for_journal_grid_idle(page) -> None:
+def _wait_for_journal_grid_idle(page, *, settle_ms: int = 500) -> None:
     timeout_ms = int(CONFIG.get("page_load_timeout_ms", 60000))
     try:
         page.locator("#ShellBlockingDiv").wait_for(
@@ -2757,7 +2768,8 @@ def _wait_for_journal_grid_idle(page) -> None:
         ).last.wait_for(state="hidden", timeout=timeout_ms)
     except (PlaywrightTimeoutError, PlaywrightError):
         pass
-    page.wait_for_timeout(500)
+    if settle_ms > 0:
+        page.wait_for_timeout(settle_ms)
 
 
 def _confirm_unsaved_changes_dialog(page, wait_ms: int = 0) -> bool:
@@ -2813,7 +2825,7 @@ def _confirm_unsaved_changes_dialog(page, wait_ms: int = 0) -> bool:
     return False
 
 
-def _save_journal_grid(page, label: str) -> None:
+def _save_journal_grid(page, label: str, *, settle_ms: int = 500) -> None:
     if not _confirm_unsaved_changes_dialog(page):
         clicked = page.evaluate(
             """
@@ -2833,11 +2845,8 @@ def _save_journal_grid(page, label: str) -> None:
                 timeout=5000,
                 force=True,
             )
-        # The prompt (when D365 raises one) shows up within a few hundred ms. A longer poll
-        # just burns wall clock on every save that needs no confirmation; a late prompt is
-        # still picked up by the _confirm_unsaved_changes_dialog calls in the next step.
-        _confirm_unsaved_changes_dialog(page, wait_ms=1500)
-        _wait_for_journal_grid_idle(page)
+        _confirm_unsaved_changes_dialog(page, wait_ms=5000)
+        _wait_for_journal_grid_idle(page, settle_ms=settle_ms)
     print(f"Saved journal grid ({label}).")
 
 
@@ -2938,12 +2947,12 @@ def _wait_for_account_lookup(page, row_index: int, expected: str, timeout_ms: in
     return False
 
 
-def _type_pasted_account(page, record, row_index: int, *, lookup_timeout_ms: int = 15000) -> bool:
+def _type_pasted_account(page, record, row_index: int) -> bool:
     expected = str(record["account"]).strip()
     account_field = _account_field_at_row(page, row_index)
     account_field.wait_for(state="visible", timeout=int(CONFIG.get("page_load_timeout_ms", 60000)))
     _fill_account_lookup(account_field, expected)
-    if _wait_for_account_lookup(page, row_index, expected, timeout_ms=lookup_timeout_ms):
+    if _wait_for_account_lookup(page, row_index, expected):
         print(f"Row {row_index + 1}: typed Account into the segmented lookup.")
         return True
     return False
@@ -3015,15 +3024,87 @@ def _repaste_pasted_row(page, record, row_index: int, col_defs, *, use_live_orde
     else:
         raise RuntimeError(f"Could not activate journal row {row_index + 1} for paste.")
 
-    _focus_journal_row_at(page, row_index)
-    page.wait_for_timeout(200)
+    anchor_label = (col_defs[0].get("label") if col_defs else None) or "Date"
+    _focus_journal_row_at(page, row_index, aria_label=anchor_label)
+    row_date = _read_date_at_row(page, row_index)
+    record_for_paste = dict(record, date=row_date) if row_date else dict(record)
+    # On an active row D365 mirrors Value date from Date as soon as paste lands,
+    # so leave Value date out of the clipboard and fill it directly afterward.
+    record_for_paste["value_date"] = ""
     _set_page_clipboard(
         page,
-        build_paste_clipboard_text([record], col_defs, use_live_order=use_live_order),
+        build_paste_clipboard_text([record_for_paste], col_defs, use_live_order=use_live_order),
     )
     page.keyboard.press("ControlOrMeta+v")
-    page.wait_for_timeout(750)
+    page.wait_for_timeout(150)
     print(f"Row {row_index + 1}: pasted complete row.")
+
+
+def _value_date_needs_fill(page, record, row_index: int) -> bool:
+    """Return True when the grid Value date does not match the record."""
+    expected = str(record.get("value_date", "")).strip()
+    if not expected:
+        return False
+    if normalize_date is None:
+        actual = _read_value_date_at_row(page, row_index)
+        return (actual or "").strip().casefold() != expected.casefold()
+
+    expected_norm = normalize_date(expected)
+    if not expected_norm:
+        return True
+
+    actual = _read_value_date_at_row(page, row_index)
+    actual_norm = normalize_date(actual) if actual else None
+    if actual_norm == expected_norm:
+        return False
+
+    # D365 auto-mirrors Value date to Date on active rows — treat that as wrong.
+    row_date = _read_date_at_row(page, row_index)
+    date_norm = normalize_date(row_date) if row_date else None
+    if actual_norm and date_norm and actual_norm == date_norm and expected_norm != date_norm:
+        return True
+
+    return not actual_norm or actual_norm != expected_norm
+
+
+def _fill_value_date_at_row(
+    page,
+    record,
+    row_index: int,
+    *,
+    force: bool = False,
+) -> None:
+    """Directly type Value date on the specific journal row (never page-wide .first)."""
+    expected = str(record.get("value_date", "")).strip()
+    if not expected:
+        return
+    expected = _d365_date(expected, expected)
+    if not force and not _value_date_needs_fill(page, record, row_index):
+        return
+    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+    if rows.count() <= row_index:
+        print(f"Row {row_index + 1}: Warning: Value date row not found for direct fill.")
+        return
+    row = rows.nth(row_index)
+    field = row.locator('input[aria-label="Value date"]:not([readonly])')
+    if field.count() == 0:
+        field = row.locator('input[aria-label="Value date"]')
+    if field.count() == 0:
+        print(f"Row {row_index + 1}: Warning: Value date input not found for direct fill.")
+        return
+    target = field.first
+    try:
+        target.wait_for(state="visible", timeout=3000)
+        _click_locator_robust(target, page, label=f"Value date input row {row_index + 1}")
+        target.press("ControlOrMeta+a")
+        target.press("Backspace")
+        target.fill(str(expected), timeout=10000)
+        target.evaluate(
+            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); }"
+        )
+        print(f"Row {row_index + 1}: filled Value date '{expected}' directly.")
+    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as err:
+        print(f"Row {row_index + 1}: Warning: Could not fill Value date '{expected}': {err}")
 
 
 def _read_pasted_account(account_field) -> str:
@@ -3108,39 +3189,40 @@ def _wait_for_pasted_row_issues(
         page.wait_for_timeout(500)
 
 
-def _repair_pasted_account_in_place(
-    page,
-    record,
-    row_index: int,
-    controller: AutomationController | None = None,
-) -> bool:
-    """Type the Account straight into the segmented lookup and save just that fix.
-
-    Typing waits for the lookup to actually resolve before returning, so it is both quicker
-    and more deterministic than re-pasting all 27 columns and hoping the lookup wins the race.
-    Returns True only when the row reads clean afterwards.
-    """
-    expected = str(record.get("account", "")).strip()
-    if not expected:
-        return False
-
-    _automation_checkpoint(page, controller)
-    _prepare_journal_grid_for_interaction(page)
+def _read_account_at_row_without_click(page, row_index: int) -> str:
+    """Read the Account cell without clicking, so it is safe to poll before saving."""
     try:
-        if not _type_pasted_account(page, record, row_index, lookup_timeout_ms=6000):
-            print(f"Row {row_index + 1}: typed Account did not resolve; falling back to re-paste.")
-            return False
-        _dismiss_d365_validation_dialog(page)
-        _save_journal_grid(page, f"after row {row_index + 1} Account repair")
-        _wait_for_journal_grid_idle(page)
-    except AutomationStoppedByUser:
-        raise
-    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as err:
-        print(f"Row {row_index + 1}: Account repair failed ({err}); falling back to re-paste.")
-        return False
+        field = _journal_field_at_row(
+            page,
+            row_index,
+            css='input[id^="LedgerJournalTrans_AccountNum_"][id$="_input"]',
+        )
+        return _read_pasted_account(field)
+    except (PlaywrightError, RuntimeError):
+        return ""
 
-    _gate_if_validation_issue(page, controller)
-    return not _wait_for_pasted_row_issues(page, record, row_index, timeout_ms=4000)
+
+def _read_method_of_payment_at_row_safe(page, row_index: int) -> str:
+    try:
+        return _read_method_of_payment_at_row(page, row_index)
+    except (PlaywrightError, RuntimeError):
+        return ""
+
+
+def _pending_pasted_row_fields(page, record, row_index: int) -> list[str]:
+    """Return which of Account / Method of payment still don't match the record, without clicking."""
+    pending = []
+    expected_account = str(record.get("account", "")).strip()
+    if expected_account and not _account_matches(
+        _read_account_at_row_without_click(page, row_index), expected_account
+    ):
+        pending.append("Account")
+    expected_method = str(record.get("method_of_payment", "")).strip()
+    if expected_method and not _method_of_payment_matches(
+        _read_method_of_payment_at_row_safe(page, row_index), expected_method
+    ):
+        pending.append("Method of payment")
+    return pending
 
 
 def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: bool = False) -> int:
@@ -3278,6 +3360,237 @@ def _read_method_of_payment_at_row(page, row_index: int) -> str:
     return str(value or "").strip()
 
 
+def _read_date_at_row(page, row_index: int) -> str:
+    """Read the Date value D365 auto-filled for a journal row (exact locale format)."""
+    value = page.evaluate(
+        """
+        (rowIndex) => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                return st.display !== 'none' && st.visibility !== 'hidden'
+                    && r.width > 0 && r.height > 0;
+            };
+
+            const grid = [...document.querySelectorAll('[role="grid"]')]
+                .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
+            const gridRows = grid
+                ? [...grid.querySelectorAll('[role="row"][id*="-row-"]')].filter(visible)
+                : [];
+            const gridRow = gridRows[rowIndex];
+            const gridCell = gridRow && [...gridRow.querySelectorAll('[role="gridcell"]')]
+                .find((el) => el.id.endsWith('-LedgerJournalTrans_TransDate'));
+            if (gridCell) {
+                const input = gridCell.querySelector('input[aria-label="Date"]');
+                const value = (input?.value || input?.getAttribute('title') || '').trim();
+                return value || (gridCell.innerText || '').trim();
+            }
+
+            const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
+            const header = headers.find((h) => (h.innerText || '').trim() === 'Date');
+            if (!header) return '';
+            const headerRow = header.closest('tr,[role="row"]');
+            if (!headerRow) return '';
+            const colIndex = [...headerRow.children].indexOf(header);
+            if (colIndex < 0) return '';
+
+            let scope = header.parentElement;
+            while (scope && !scope.querySelector('tbody tr')) scope = scope.parentElement;
+            if (!scope) return '';
+
+            const rows = [...scope.querySelectorAll('tbody tr')].filter(visible);
+            const row = rows[rowIndex];
+            if (!row) return '';
+            const cell = row.children[colIndex];
+            if (!cell) return '';
+
+            const input = cell.querySelector('input[aria-label="Date"]');
+            if (input) {
+                const v = (input.value || '').trim();
+                if (v) return v;
+            }
+            const text = (cell.innerText || '').trim();
+            return text && text !== 'Date' ? text : '';
+        }
+        """,
+        row_index,
+    )
+    return str(value or "").strip()
+
+
+def _read_value_date_at_row(page, row_index: int) -> str:
+    """Read the Value date shown for a journal row, without activating/clicking it."""
+    value = page.evaluate(
+        """
+        (rowIndex) => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                return st.display !== 'none' && st.visibility !== 'hidden'
+                    && r.width > 0 && r.height > 0;
+            };
+
+            const grid = [...document.querySelectorAll('[role="grid"]')]
+                .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
+            const gridRows = grid
+                ? [...grid.querySelectorAll('[role="row"][id*="-row-"]')].filter(visible)
+                : [];
+            const gridRow = gridRows[rowIndex];
+            const gridCell = gridRow && [...gridRow.querySelectorAll('[role="gridcell"]')]
+                .find((el) => el.id.endsWith('-LedgerJournalTrans_TransDateValueDate')
+                    || el.id.endsWith('-LedgerJournalTrans_ValueDate'));
+            if (gridCell) {
+                const input = gridCell.querySelector('input[aria-label="Value date"]');
+                const value = (input?.value || input?.getAttribute('title') || '').trim();
+                return value || (gridCell.innerText || '').trim();
+            }
+
+            const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
+            const header = headers.find((h) => (h.innerText || '').trim() === 'Value date');
+            if (!header) return '';
+            const headerRow = header.closest('tr,[role="row"]');
+            if (!headerRow) return '';
+            const colIndex = [...headerRow.children].indexOf(header);
+            if (colIndex < 0) return '';
+
+            let scope = header.parentElement;
+            while (scope && !scope.querySelector('tbody tr')) scope = scope.parentElement;
+            if (!scope) return '';
+
+            const rows = [...scope.querySelectorAll('tbody tr')].filter(visible);
+            const row = rows[rowIndex];
+            if (!row) return '';
+            const cell = row.children[colIndex];
+            if (!cell) return '';
+
+            const input = cell.querySelector('input[aria-label="Value date"]');
+            if (input) {
+                const v = (input.value || '').trim();
+                if (v) return v;
+            }
+            const text = (cell.innerText || '').trim();
+            return text && text !== 'Value date' ? text : '';
+        }
+        """,
+        row_index,
+    )
+    return str(value or "").strip()
+
+
+def _ensure_value_date_at_row(page, record, row_index: int) -> bool:
+    """Verify Value date matches the record (read-only check); activate + fix only if wrong.
+
+    Returns True if a fix was applied (caller should save afterward).
+    """
+    if not _value_date_needs_fill(page, record, row_index):
+        return False
+    expected = str(record.get("value_date", "")).strip()
+    actual = _read_value_date_at_row(page, row_index)
+    print(f"Row {row_index + 1}: Value date '{actual or '(blank)'}' does not match expected '{expected}'; fixing.")
+    try:
+        _activate_journal_row_for_paste(page, row_index)
+        _confirm_unsaved_changes_dialog(page, wait_ms=500)
+        _wait_for_journal_grid_idle(page)
+    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
+        pass
+    _fill_value_date_at_row(page, record, row_index, force=True)
+    return True
+
+
+def _records_with_d365_dates(page, records: list, anchor_row_index: int = 0) -> list:
+    """Copy records with Date set to D365's auto-filled value (same format D365 uses).
+
+    Pasting an empty Date cell clears D365's auto-fill, so read the grid value after
+    focus and echo it back in column 1 for alignment without changing the date.
+    """
+    d365_date = _read_date_at_row(page, anchor_row_index)
+    if not d365_date:
+        page.wait_for_timeout(300)
+        d365_date = _read_date_at_row(page, anchor_row_index)
+    if d365_date:
+        print(f"Using D365 auto-filled Date '{d365_date}' for paste alignment.")
+        return [dict(record, date=d365_date) for record in records]
+    print("Warning: Could not read D365 auto-filled Date; Date column may be blank after paste.")
+    return [dict(record) for record in records]
+
+
+def _read_voucher_at_row(page, row_index: int) -> str:
+    """Read the Voucher value for a journal row (works whether the row is active or not).
+
+    D365 assigns the Voucher number only once a row's Save has actually committed
+    server-side, which makes it a reliable signal that the row is fully saved —
+    unlike Account/Method of payment, which can read blank right up until save commits.
+    """
+    value = page.evaluate(
+        """
+        (rowIndex) => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                return st.display !== 'none' && st.visibility !== 'hidden'
+                    && r.width > 0 && r.height > 0;
+            };
+
+            const grid = [...document.querySelectorAll('[role="grid"]')]
+                .find((el) => (el.getAttribute('aria-label') || '') === 'Journal lines');
+            const gridRows = grid
+                ? [...grid.querySelectorAll('[role="row"][id*="-row-"]')].filter(visible)
+                : [];
+            const gridRow = gridRows[rowIndex];
+            const gridCell = gridRow && [...gridRow.querySelectorAll('[role="gridcell"]')]
+                .find((el) => el.id.endsWith('-LedgerJournalTrans_Voucher'));
+            if (gridCell) {
+                const input = gridCell.querySelector('input[aria-label="Voucher"]');
+                const value = (input?.value || input?.getAttribute('title') || '').trim();
+                return value || (gridCell.innerText || '').trim();
+            }
+
+            const headers = [...document.querySelectorAll('th,[role="columnheader"]')];
+            const header = headers.find((h) => (h.innerText || '').trim() === 'Voucher');
+            if (!header) return '';
+            const headerRow = header.closest('tr,[role="row"]');
+            if (!headerRow) return '';
+            const colIndex = [...headerRow.children].indexOf(header);
+            if (colIndex < 0) return '';
+
+            let scope = header.parentElement;
+            while (scope && !scope.querySelector('tbody tr')) scope = scope.parentElement;
+            if (!scope) return '';
+
+            const rows = [...scope.querySelectorAll('tbody tr')].filter(visible);
+            const row = rows[rowIndex];
+            if (!row) return '';
+            const cell = row.children[colIndex];
+            if (!cell) return '';
+
+            const input = cell.querySelector('input[aria-label="Voucher"]');
+            if (input) {
+                const v = (input.value || '').trim();
+                if (v) return v;
+            }
+            const text = (cell.innerText || '').trim();
+            return text && text !== 'Voucher' ? text : '';
+        }
+        """,
+        row_index,
+    )
+    return str(value or "").strip()
+
+
+def _wait_for_voucher_at_row(page, row_index: int, timeout_ms: int = 15000) -> bool:
+    """Poll a row's Voucher column until D365 has assigned one (i.e. the row's save committed)."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        if _read_voucher_at_row(page, row_index):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(250)
+
+
 def _repair_missing_pasted_method_of_payment(page, records) -> int:
     """Re-fill Method of Payment for rows where bulk paste left it blank."""
     # Wait for the grid to be ready — it may have reloaded after account repair saves
@@ -3360,10 +3673,14 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
     ]
     print(f"Bulk paste column map ({len(ordered_cols)} cols): {mapped_labels}")
 
-    paste_text = build_paste_clipboard_text(records, ordered_cols, use_live_order=True)
+    # Paste anchors on Date (column 1). Read D365's auto-filled Date after focus and echo
+    # it back so paste alignment is preserved without clearing the Date cell.
+    _focus_journal_row_for_paste(page, 0)
+    page.wait_for_timeout(200)
+    records_for_paste = _records_with_d365_dates(page, records, anchor_row_index=0)
+    paste_text = build_paste_clipboard_text(records_for_paste, ordered_cols, use_live_order=True)
     col_count = paste_text.split("\r\n")[0].count("\t") + 1 if paste_text else 0
     print(f"Bulk paste: {len(records)} rows x {col_count} columns (starting at Date column).")
-    _focus_journal_row_for_paste(page, 0)
     _set_page_clipboard(page, paste_text)
     page.keyboard.press("ControlOrMeta+v")
     page.wait_for_timeout(400)
@@ -3371,6 +3688,10 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
     _wait_for_journal_grid_idle(page)
     _dismiss_d365_validation_dialog(page)
     _gate_if_validation_issue(page, controller)
+
+    # Save immediately — waiting for Account/Method of payment to resolve beforehand never
+    # succeeds (D365 only finalizes those segmented lookups as part of the save commit
+    # itself), so any pre-save wait here is pure dead time.
     if not _confirm_unsaved_changes_dialog(page, wait_ms=2000):
         _save_journal_grid(page, "after bulk paste")
     else:
@@ -3383,36 +3704,43 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
 
     _gate_if_validation_issue(page, controller)
 
+    # Voucher is only assigned once a row's save has actually committed server-side, so
+    # confirm it here (fast poll, not a fixed delay) before touching rows individually.
+    last_index = len(records) - 1
+    if not _wait_for_voucher_at_row(page, last_index):
+        print(f"Warning: Row {last_index + 1} has no Voucher yet after bulk save; continuing anyway.")
+
     print("Bulk paste saved; re-pasting rows 2 onward and saving each row before advancing.")
-    for index in range(1, len(records)):
-        _repaste_and_save_row_with_retry(
-            page,
-            records[index],
-            index,
-            ordered_cols,
-            controller,
-            use_live_order=True,
-        )
 
-    retry_indices = []
-    for index, record in enumerate(records):
-        issues = _wait_for_pasted_row_issues(page, record, index)
-        if issues:
-            print(
-                f"Row {index + 1}: incomplete after save ({'; '.join(issues)}); "
-                "scheduling one complete-row retry."
+    # Row 1 was bulk-pasted and saved already — fix Value date once here, not inside the loop.
+    if _value_date_needs_fill(page, records[0], 0):
+        try:
+            _activate_journal_row_for_paste(page, 0)
+            _confirm_unsaved_changes_dialog(page, wait_ms=500)
+        except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
+            pass
+        _fill_value_date_at_row(page, records[0], 0, force=True)
+        _save_journal_grid(page, "after row 1 Value date", settle_ms=100)
+        _dismiss_d365_validation_dialog(page)
+
+    all_issues: list[tuple[int, list[str]]] = []
+    for index in range(len(records)):
+        if index > 0:
+            _repaste_and_save_row_with_retry(
+                page,
+                records_for_paste[index],
+                index,
+                ordered_cols,
+                controller,
+                use_live_order=True,
             )
-            retry_indices.append(index)
-        else:
+
+        issues = _pending_pasted_row_fields(page, records[index], index)
+        if not issues:
             print(f"Row {index + 1}: Account and Method of payment confirmed after save.")
-
-    if not retry_indices:
-        return
-
-    for index in retry_indices:
-        if _repair_pasted_account_in_place(page, records[index], index, controller):
-            print(f"Row {index + 1}: repaired in place by typing the Account.")
             continue
+
+        print(f"Row {index + 1}: {', '.join(issues)} still blank after save; retrying this row once...")
         _repaste_and_save_row_with_retry(
             page,
             records[index],
@@ -3420,17 +3748,17 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
             ordered_cols,
             controller,
             use_live_order=True,
-            save_label=f"after one-time row {index + 1} retry",
+            save_label=f"after row {index + 1} immediate retry",
         )
-
-    for index in retry_indices:
-        issues = _wait_for_pasted_row_issues(page, records[index], index)
+        issues = _wait_for_pasted_row_issues(page, records[index], index, timeout_ms=1500)
         if issues:
-            raise RuntimeError(
-                f"D365 row {index + 1} remained incomplete after one retry: "
-                + "; ".join(issues)
-            )
-        print(f"Row {index + 1}: complete row confirmed after one retry.")
+            all_issues.append((index, issues))
+        else:
+            print(f"Row {index + 1}: confirmed after retry.")
+
+    if all_issues:
+        details = "; ".join(f"row {index + 1}: {', '.join(issues)}" for index, issues in all_issues)
+        raise RuntimeError(f"D365 row(s) remained incomplete after save: {details}")
 
 
 def _process_bulk_paste_chunks(page, records, col_defs, controller: AutomationController | None = None):

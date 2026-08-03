@@ -349,7 +349,7 @@ HEADERS = [
 
 COL_WIDTHS = [50, 220, 140, 160, 140, 280, 180, 140, 360]
 
-DATE_FIELD_KEYS = frozenset({"date", "value_date", "reference_date", "account_date"})
+DATE_FIELD_KEYS = frozenset({"value_date", "reference_date", "account_date"})
 
 
 def format_d365_date(value) -> str:
@@ -2706,10 +2706,6 @@ class Application(tk.Tk):
         payment_ref = str(record.get("payment_reference", "")).strip()
         if payment_ref:
             record["description"] = payment_ref
-
-        value_date = str(record.get("value_date", "")).strip()
-        if value_date:
-            record["date"] = value_date
 
         reference_date = str(record.get("reference_date", "")).strip()
         if reference_date:

@@ -59,7 +59,8 @@ EXTRA_FIELD_LABELS = {
 }
 PRESET_FIELD_LABELS = {**TRANSACTION_FIELD_LABELS, **EXTRA_FIELD_LABELS}
 PRESET_FIELD_KEYS = list(dict.fromkeys(TRANSACTION_FIELD_KEYS + list(EXTRA_FIELD_LABELS)))
-DATE_FIELD_KEYS = frozenset({"date", "value_date", "reference_date", "account_date"})
+# Date is excluded — D365 auto-fills the Date column; paste keeps that slot empty for alignment.
+DATE_FIELD_KEYS = frozenset({"value_date", "reference_date", "account_date"})
 SPACER_FIELD_KEY = "__spacer__"
 
 # Normalized D365 header label -> field key (built from DEFAULT_CLIPBOARD_COL_DEFS)
@@ -215,6 +216,10 @@ def resolve_clipboard_cell(txn: dict, col: dict) -> str:
     key = col.get("key", "")
     if key == SPACER_FIELD_KEY:
         return ""
+    if key == "date":
+        # Paste D365's own auto-filled Date value as-is (injected by automation before paste).
+        # Never normalize — must match D365 locale format (e.g. 8/3/2026).
+        return str(txn.get("date", "") or "").strip()
     value = txn.get(key, "")
     if value is None or str(value).strip() == "":
         raw = str(col.get("default_value", "") or "")
