@@ -479,10 +479,39 @@ def install_playwright_chromium() -> tuple[bool, str]:
     return False, combined or f"Playwright install failed with exit code {result.returncode}."
 
 
+def _find_chromium_executable_on_disk() -> Path | None:
+    """Locate the Chromium binary under PLAYWRIGHT_BROWSERS_PATH without spawning the driver.
+
+    Spawning the Playwright Node driver just to ask for the executable path costs
+    over a second on startup; a filesystem glob is near-instant and covers the
+    layout Playwright itself uses (chromium-<rev>/chrome-win64/chrome.exe, etc).
+    """
+    browsers_dir = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", str(DEFAULT_PLAYWRIGHT_BROWSERS_PATH)))
+    if not browsers_dir.is_dir():
+        return None
+    candidates = (
+        "chromium-*/chrome-win64/chrome.exe",
+        "chromium-*/chrome-linux/chrome",
+        "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+    )
+    for pattern in candidates:
+        matches = sorted(browsers_dir.glob(pattern), reverse=True)
+        if matches:
+            return matches[0]
+    return None
+
+
 def is_playwright_chromium_available() -> tuple[bool, str]:
     """Check whether Playwright Chromium executable is available."""
     if not sync_playwright:
         return False, "Playwright Python package is not installed."
+
+    fast_path = _find_chromium_executable_on_disk()
+    if fast_path is not None:
+        return True, str(fast_path)
+
+    # Fall back to asking Playwright directly (slower: spawns the Node driver)
+    # only when the fast filesystem check couldn't confirm an install.
     try:
         with sync_playwright() as playwright:
             exe_path = Path(playwright.chromium.executable_path)
@@ -739,7 +768,19 @@ def _automation_checkpoint(page, controller: AutomationController | None) -> Non
         if not controller.paused:
             return
         # Keep Playwright's event loop active so the browser can deliver Resume/Quit.
-        page.wait_for_timeout(200)
+        _interruptible_wait(page, 200, controller)
+
+
+def _interruptible_wait(page, ms: int, controller: AutomationController | None = None) -> None:
+    """Sleep in short chunks so Quit / Force Stop stay responsive."""
+    remaining = max(0, int(ms))
+    step = 200
+    while remaining > 0:
+        if controller is not None:
+            controller.checkpoint()
+        chunk = min(step, remaining)
+        page.wait_for_timeout(chunk)
+        remaining -= chunk
 
 
 def _wait_for_automation_condition(page, expression: str, controller: AutomationController | None) -> None:
@@ -748,7 +789,7 @@ def _wait_for_automation_condition(page, expression: str, controller: Automation
         _automation_checkpoint(page, controller)
         if page.evaluate(f"() => Boolean({expression})"):
             return
-        page.wait_for_timeout(200)
+        _interruptible_wait(page, 200, controller)
 
 
 class SessionExpiredError(RuntimeError):
@@ -1223,8 +1264,10 @@ def _journal_line_row_at_exact(page, row_index: int):
 
 def _activate_journal_row_for_paste(page, row_index: int) -> None:
     """Click an inactive journal row so D365 renders Date/Account inputs, then focus Date."""
+    _dismiss_d365_validation_dialog(page)
     rows = page.locator(_JOURNAL_DATA_ROW_SEL)
     row_count = rows.count()
+    activated = False
     if row_count:
         if row_count <= row_index:
             raise RuntimeError(
@@ -1235,18 +1278,25 @@ def _activate_journal_row_for_paste(page, row_index: int) -> None:
         date_cell = row.locator(
             '[role="gridcell"][id$="-LedgerJournalTrans_TransDate"]'
         )
-        if not date_cell.count():
-            raise RuntimeError(
-                f"Could not find Date cell for journal row {row_index + 1}."
-            )
-        cell_id = date_cell.first.get_attribute("id") or "(no id)"
-        _scroll_journal_row_into_view(row)
-        try:
-            date_cell.first.click(timeout=5000)
-        except PlaywrightError:
-            date_cell.first.click(force=True, timeout=5000)
-        print(f"Activated journal row {row_index + 1} via Date cell {cell_id}.")
-        page.wait_for_timeout(150)
+        if date_cell.count():
+            cell_id = date_cell.first.get_attribute("id") or "(no id)"
+            _scroll_journal_row_into_view(row)
+            try:
+                _click_locator_robust(
+                    date_cell.first,
+                    page,
+                    label=f"Date cell {cell_id}",
+                )
+                print(f"Activated journal row {row_index + 1} via Date cell {cell_id}.")
+                page.wait_for_timeout(150)
+                activated = True
+            except PlaywrightError as err:
+                print(
+                    f"Warning: Playwright could not click row {row_index + 1} Date cell "
+                    f"({err}); trying JS activation."
+                )
+
+    if activated:
         return
 
     clicked = page.evaluate(
@@ -1397,15 +1447,19 @@ def _focus_journal_row_at(page, row_index: int) -> None:
     if page.locator(_JOURNAL_DATA_ROW_SEL).count():
         date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
         date_input.wait_for(state="visible", timeout=8000)
-        date_input.click(timeout=5000)
+        _click_locator_robust(date_input, page, label=f"Date input row {row_index + 1}")
         page.keyboard.press("Home")
         return
 
     for sel in ('input[aria-label="Date"]:not([readonly])', 'input[aria-label="Date"]'):
         date_input = row.locator(sel)
         if date_input.count():
-            date_input.first.scroll_into_view_if_needed(timeout=5000)
-            date_input.first.click(timeout=5000)
+            target = date_input.first
+            try:
+                target.scroll_into_view_if_needed(timeout=5000)
+            except PlaywrightError:
+                pass
+            _click_locator_robust(target, page, label=f"Date input row {row_index + 1}")
             page.wait_for_timeout(150)
             try:
                 page.keyboard.press("Home")
@@ -1429,11 +1483,91 @@ def _journal_grid_row(page, row_index: int):
 
 
 def _scroll_journal_row_into_view(row) -> None:
+    page = row.page
     try:
-        row.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
-        row.page.wait_for_timeout(150)
+        page.evaluate(
+            """
+            () => {
+                const grid = document.querySelector('[role="grid"][aria-label="Journal lines"]');
+                if (grid) {
+                    grid.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }
+            }
+            """
+        )
+    except PlaywrightError:
+        pass
+    try:
+        row.evaluate(
+            """
+            (el) => {
+                el.scrollIntoView({ block: 'center', inline: 'center' });
+                let parent = el.parentElement;
+                while (parent) {
+                    const st = window.getComputedStyle(parent);
+                    const overflowY = st.overflowY;
+                    if (
+                        (overflowY === 'auto' || overflowY === 'scroll')
+                        && parent.scrollHeight > parent.clientHeight + 4
+                    ) {
+                        const rect = el.getBoundingClientRect();
+                        const parentRect = parent.getBoundingClientRect();
+                        if (rect.top < parentRect.top) {
+                            parent.scrollTop -= (parentRect.top - rect.top + 24);
+                        } else if (rect.bottom > parentRect.bottom) {
+                            parent.scrollTop += (rect.bottom - parentRect.bottom + 24);
+                        }
+                    }
+                    parent = parent.parentElement;
+                }
+            }
+            """
+        )
+        page.wait_for_timeout(150)
     except (PlaywrightTimeoutError, PlaywrightError):
         pass
+
+
+def _click_locator_robust(locator, page, *, label: str = "element", timeout: int = 5000) -> None:
+    """Click a grid cell even when D365 fixed-table layout leaves it off-screen."""
+    last_err: PlaywrightError | None = None
+    try:
+        locator.scroll_into_view_if_needed(timeout=timeout)
+    except PlaywrightError as err:
+        last_err = err
+    page.wait_for_timeout(100)
+
+    for strategy in ("click", "force", "js"):
+        try:
+            if strategy == "click":
+                locator.click(timeout=timeout)
+                return
+            if strategy == "force":
+                locator.click(force=True, timeout=timeout)
+                return
+            locator.evaluate(
+                """
+                (el) => {
+                    el.scrollIntoView({ block: 'center', inline: 'center' });
+                    const fire = (type) => el.dispatchEvent(
+                        new MouseEvent(type, { bubbles: true, cancelable: true, view: window })
+                    );
+                    fire('mousedown');
+                    fire('mouseup');
+                    fire('click');
+                    if (typeof el.focus === 'function') {
+                        el.focus();
+                    }
+                }
+                """
+            )
+            return
+        except PlaywrightError as err:
+            last_err = err
+
+    if last_err is not None:
+        raise last_err
+    raise PlaywrightError(f"Could not click {label}.")
 
 
 def _journal_field_locator(page, row_index: int, *, aria_label: str | None = None, css: str | None = None):
@@ -1827,6 +1961,8 @@ def _wait_until_issue_resolved(page, issue_name: str, controller: AutomationCont
         decision = page.evaluate("window.automationIssueResolved")
         if decision == "yes":
             print(f"User confirmed issue resolved: {label}")
+            _dismiss_d365_validation_dialog(page)
+            page.wait_for_timeout(400)
             return
         print(f"User clicked No — still waiting for resolution: {label}")
         page.wait_for_timeout(400)
@@ -1837,9 +1973,96 @@ def _wait_until_issue_resolved(page, issue_name: str, controller: AutomationCont
 
 def _gate_if_validation_issue(page, controller: AutomationController | None = None) -> None:
     """If a D365 validation blocker is visible, wait until the user confirms Yes."""
-    issue = _read_d365_validation_issue(page)
-    if issue:
+    while True:
+        issue = _read_d365_validation_issue(page)
+        if not issue:
+            return
         print(f"D365 validation issue detected — showing resolution gate: {issue}")
+        _wait_until_issue_resolved(page, issue, controller)
+        _dismiss_d365_validation_dialog(page)
+        page.wait_for_timeout(400)
+        if not _read_d365_validation_issue(page):
+            return
+        print("Validation still visible after Yes — fix remaining issues in D365, then click Yes again.")
+
+
+def _prepare_journal_grid_for_interaction(page) -> None:
+    """Dismiss blockers and scroll the journal grid back into a clickable state."""
+    _dismiss_d365_validation_dialog(page)
+    try:
+        page.evaluate(
+            """
+            () => {
+                document.getElementById('automation-issue-resolved-gate')?.remove();
+                const grid = document.querySelector('[role="grid"][aria-label="Journal lines"]');
+                if (grid) {
+                    grid.scrollIntoView({ block: 'center', inline: 'nearest' });
+                }
+            }
+            """
+        )
+    except PlaywrightError:
+        pass
+    try:
+        page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=3000)
+    except PlaywrightTimeoutError:
+        pass
+    _wait_for_journal_grid_idle(page)
+
+
+def _repaste_and_save_row_with_retry(
+    page,
+    record,
+    row_index: int,
+    col_defs,
+    controller: AutomationController | None = None,
+    *,
+    use_live_order: bool = False,
+    save_label: str | None = None,
+) -> None:
+    """Re-paste one journal row and save, retrying the same row after user resolves validation."""
+    label = save_label or f"after complete row {row_index + 1} re-paste"
+    attempt = 0
+    while True:
+        attempt += 1
+        _automation_checkpoint(page, controller)
+        _gate_if_validation_issue(page, controller)
+        if attempt > 1:
+            print(f"Row {row_index + 1}: retrying re-paste and save (attempt {attempt})...")
+        try:
+            _prepare_journal_grid_for_interaction(page)
+            _repaste_pasted_row(
+                page,
+                record,
+                row_index,
+                col_defs,
+                use_live_order=use_live_order,
+            )
+            _wait_for_journal_grid_idle(page)
+            _dismiss_d365_validation_dialog(page)
+            _save_journal_grid(page, label)
+            _wait_for_journal_grid_idle(page)
+            _dismiss_d365_validation_dialog(page)
+        except AutomationStoppedByUser:
+            raise
+        except PlaywrightError as err:
+            msg = str(err).casefold()
+            if "outside of the viewport" in msg or "not visible" in msg or "intercept" in msg:
+                print(
+                    f"Row {row_index + 1}: grid interaction failed ({err}); "
+                    "resetting grid view and retrying..."
+                )
+                _prepare_journal_grid_for_interaction(page)
+                continue
+            raise
+        issue = _read_d365_validation_issue(page)
+        if not issue:
+            print(f"Row {row_index + 1}: saved successfully.")
+            return
+        print(
+            f"Row {row_index + 1}: validation still present after save — "
+            f"waiting for user to fix: {issue}"
+        )
         _wait_until_issue_resolved(page, issue, controller)
 
 
@@ -3057,19 +3280,14 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
 
     print("Bulk paste saved; re-pasting rows 2 onward and saving each row before advancing.")
     for index in range(1, len(records)):
-        _automation_checkpoint(page, controller)
-        _gate_if_validation_issue(page, controller)
-        _repaste_pasted_row(
+        _repaste_and_save_row_with_retry(
             page,
             records[index],
             index,
             ordered_cols,
+            controller,
             use_live_order=True,
         )
-        _wait_for_journal_grid_idle(page)
-        _dismiss_d365_validation_dialog(page)
-        _save_journal_grid(page, f"after complete row {index + 1} re-paste")
-        _wait_for_journal_grid_idle(page)
 
     retry_indices = []
     for index, record in enumerate(records):
@@ -3087,19 +3305,15 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
         return
 
     for index in retry_indices:
-        _automation_checkpoint(page, controller)
-        _gate_if_validation_issue(page, controller)
-        _repaste_pasted_row(
+        _repaste_and_save_row_with_retry(
             page,
             records[index],
             index,
             ordered_cols,
+            controller,
             use_live_order=True,
+            save_label=f"after one-time row {index + 1} retry",
         )
-        _wait_for_journal_grid_idle(page)
-        _dismiss_d365_validation_dialog(page)
-        _save_journal_grid(page, f"after one-time row {index + 1} retry")
-        _wait_for_journal_grid_idle(page)
 
     for index in retry_indices:
         issues = _wait_for_pasted_row_issues(page, records[index], index)
@@ -3775,10 +3989,10 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None, 
                 print("Automation failed — browser left open for inspection. Close it when done.")
                 try:
                     while browser.is_connected():
-                        if page is not None:
-                            page.wait_for_timeout(1000)
-                        else:
-                            time.sleep(1)
+                        _automation_checkpoint(page, controller)
+                        _interruptible_wait(page, 1000, controller)
+                except AutomationStoppedByUser as stop_err:
+                    automation_error = stop_err
                 except Exception:
                     pass
         else:
@@ -3787,10 +4001,7 @@ def test_final8(records=None, *, bulk_paste_mode=True, clipboard_col_defs=None, 
                 try:
                     while browser.is_connected():
                         _automation_checkpoint(page, controller)
-                        if page is not None:
-                            page.wait_for_timeout(1000)
-                        else:
-                            time.sleep(1)
+                        _interruptible_wait(page, 1000, controller)
                 except AutomationStoppedByUser as err:
                     automation_error = err
                 except Exception:

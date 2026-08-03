@@ -1153,10 +1153,11 @@ class ScrollableTransactionTable(tk.Frame):
     PAYMENT_REF_MIN = 520
     PAYMENT_REF_MAX = 1400
 
-    def __init__(self, parent, col_defs, colors, *args, **kwargs):
+    def __init__(self, parent, col_defs, colors, on_row_edit=None, *args, **kwargs):
         super().__init__(parent, bg=colors["table_shell_bg"], *args, **kwargs)
         self.col_defs = list(col_defs)
         self.colors = colors
+        self.on_row_edit = on_row_edit
         self._record_count = 0
         self._cell_font = tkfont.Font(family="Segoe UI", size=10)
         self._content_width = self._calc_content_width(self.col_defs)
@@ -1218,20 +1219,22 @@ class ScrollableTransactionTable(tk.Frame):
             lambda e: self._on_table_scroll(e, force_horizontal=True),
             add="+",
         )
-        widget.bind("<Button-4>", self._on_table_scroll, add="+")
-        widget.bind("<Button-5>", self._on_table_scroll, add="+")
-        widget.bind("<Button-6>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
-        widget.bind("<Button-7>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
-        widget.bind(
-            "<Shift-Button-4>",
-            lambda e: self._on_table_scroll(e, force_horizontal=True),
-            add="+",
-        )
-        widget.bind(
-            "<Shift-Button-5>",
-            lambda e: self._on_table_scroll(e, force_horizontal=True),
-            add="+",
-        )
+        # Button-4..7 are Linux/macOS only; Windows Tk rejects Button-6/7 bindings.
+        if sys.platform != "win32":
+            widget.bind("<Button-4>", self._on_table_scroll, add="+")
+            widget.bind("<Button-5>", self._on_table_scroll, add="+")
+            widget.bind("<Button-6>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
+            widget.bind("<Button-7>", lambda e: self._on_table_scroll(e, force_horizontal=True), add="+")
+            widget.bind(
+                "<Shift-Button-4>",
+                lambda e: self._on_table_scroll(e, force_horizontal=True),
+                add="+",
+            )
+            widget.bind(
+                "<Shift-Button-5>",
+                lambda e: self._on_table_scroll(e, force_horizontal=True),
+                add="+",
+            )
         for child in widget.winfo_children():
             self._bind_table_scroll(child)
 
@@ -1306,6 +1309,7 @@ class ScrollableTransactionTable(tk.Frame):
                     value = format_d365_date(value)
                     record[key] = value
                 row_widgets[key] = tk.StringVar(value=value)
+            row_widgets["_entries"] = {}
             row_vars_list.append(row_widgets)
 
             row_bg = (
@@ -1336,6 +1340,18 @@ class ScrollableTransactionTable(tk.Frame):
                         width=1,
                     )
                     entry.pack(fill="both", expand=True)
+                    row_widgets["_entries"][key] = entry
+                    if self.on_row_edit is not None:
+                        entry.bind(
+                            "<FocusOut>",
+                            lambda _e, rw=row_widgets: self.on_row_edit(rw),
+                            add="+",
+                        )
+                        entry.bind(
+                            "<KeyRelease>",
+                            lambda _e, rw=row_widgets: self.on_row_edit(rw),
+                            add="+",
+                        )
                 else:
                     tk.Label(
                         cell,
@@ -1453,8 +1469,8 @@ class Application(tk.Tk):
         self.title("Sobha Reconciliation")
         self.geometry("1480x920")
         self.minsize(1160, 760)
-        self.configure(bg="#d7dbe2")
         self.row_vars = []
+        self._transaction_edits: dict[str, dict[str, str]] = {}
 
         # Initialize variables
         self.selected_batch_var = tk.StringVar(value="")
@@ -1516,7 +1532,11 @@ class Application(tk.Tk):
             "selector_border": "#BCBABA",
             "selector_bg": "#FFFFFF",
             "selector_active": "#5E5453",
+            "toolbar_divider": "#7A706F",
+            "filter_label": "#6B6767",
         }
+
+        self.configure(bg=self.colors["page_bg"])
 
         # Initialize Forest Theme (fallback to default if missing)
         style = ttk.Style()
@@ -1542,7 +1562,7 @@ class Application(tk.Tk):
         except Exception:
             self.sobha_brand_img = None
 
-        self.header_bar = tk.Frame(self.root_frame, bg=self.colors["primary_bg"], padx=18, pady=10)
+        self.header_bar = tk.Frame(self.root_frame, bg=self.colors["primary_bg"], padx=20, pady=12)
 
         # Brand Title Left
         brand_left = tk.Frame(self.header_bar, bg=self.colors["primary_bg"])
@@ -1550,7 +1570,7 @@ class Application(tk.Tk):
 
         if self.sobha_brand_img is not None:
             logo_lbl = tk.Label(brand_left, image=self.sobha_brand_img, bg=self.colors["primary_bg"])
-            logo_lbl.pack(side="left", padx=(0, 10))
+            logo_lbl.pack(side="left", padx=(0, 12))
 
         brand_text_wrap = tk.Frame(brand_left, bg=self.colors["primary_bg"])
         brand_text_wrap.pack(side="left")
@@ -1560,7 +1580,7 @@ class Application(tk.Tk):
             text="Sobha Reconciliation",
             bg=self.colors["primary_bg"],
             fg=self.colors["white"],
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 14, "bold"),
             anchor="w",
         ).pack(anchor="w")
 
@@ -1571,7 +1591,7 @@ class Application(tk.Tk):
             fg="#D2D5DB",
             font=("Segoe UI", 9),
             anchor="w",
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(1, 0))
 
         # Functional Toolbar Actions Right (shown only when logged in)
         self.header_actions = tk.Frame(self.header_bar, bg=self.colors["primary_bg"])
@@ -1586,12 +1606,15 @@ class Application(tk.Tk):
             fg="white",
             activebackground="#1D4ED8",
             font=("Segoe UI", 10, "bold"),
-            padx=16,
-            pady=6,
-        ).pack(side="right", padx=(8, 0))
+            padx=18,
+            pady=7,
+        ).pack(side="right", padx=(10, 0))
+
+        icon_toolbar = tk.Frame(self.header_actions, bg=self.colors["primary_bg"])
+        icon_toolbar.pack(side="right", padx=(10, 0))
 
         export_btn = _make_button(
-            self.header_actions,
+            icon_toolbar,
             text="📥",
             command=self._export_to_excel,
             relief="flat",
@@ -1599,15 +1622,15 @@ class Application(tk.Tk):
             bg=self.colors["white"],
             fg=self.colors["dark_text"],
             activebackground="#F4F4F4",
-            font=("Segoe UI Emoji", 11),
-            padx=10,
-            pady=4,
+            font=("Segoe UI Emoji", 12),
+            padx=11,
+            pady=5,
         )
-        export_btn.pack(side="right", padx=(8, 0))
+        export_btn.pack(side="left", padx=(6, 0))
         self._bind_copy_button_tooltip(export_btn, "Export to Excel (.xlsx)")
 
         refresh_btn = _make_button(
-            self.header_actions,
+            icon_toolbar,
             text="🔄",
             command=self._refresh_transactions,
             cursor="hand2",
@@ -1615,23 +1638,30 @@ class Application(tk.Tk):
             bg="#0D9488",
             fg="white",
             activebackground="#0F766E",
-            font=("Segoe UI Emoji", 11),
-            padx=10,
-            pady=4,
+            font=("Segoe UI Emoji", 12),
+            padx=11,
+            pady=5,
         )
-        refresh_btn.pack(side="right", padx=(8, 0))
+        refresh_btn.pack(side="left")
         self._bind_copy_button_tooltip(refresh_btn, "Refresh transactions")
 
         self.session_status_label = tk.Label(
             self.header_actions,
             text="Logged In",
-            bg=self.colors["accent"],
+            bg="#3B5998",
             fg="white",
             font=("Segoe UI", 9, "bold"),
-            padx=14,
-            pady=6,
+            padx=12,
+            pady=7,
         )
-        self.session_status_label.pack(side="right", padx=(8, 0))
+        self.session_status_label.pack(side="right", padx=(10, 0))
+
+        tk.Frame(
+            self.header_actions,
+            bg=self.colors["toolbar_divider"],
+            width=1,
+            height=30,
+        ).pack(side="right", padx=(10, 0), pady=2)
 
         _make_button(
             self.header_actions,
@@ -1643,41 +1673,45 @@ class Application(tk.Tk):
             fg=self.colors["dark_text"],
             activebackground="#BCBABA",
             font=("Segoe UI", 9, "bold"),
-            padx=10,
-            pady=6,
-        ).pack(side="right", padx=(8, 0))
+            padx=12,
+            pady=7,
+        ).pack(side="right")
 
         # Logged-out welcome screen
         self.welcome_view = self._build_welcome_view(self.root_frame)
 
         # Logged-in workspace
         self.app_view = tk.Frame(self.root_frame, bg=self.colors["page_bg"])
-        body_content = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=18, pady=14)
+        body_content = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=20, pady=16)
         body_content.pack(fill="both", expand=True)
 
         filter_card = tk.Frame(
             body_content,
-            bg=self.colors["card_bg"],
+            bg=self.colors["white"],
             highlightbackground=self.colors["border_gray"],
             highlightthickness=1,
-            padx=16,
-            pady=12,
+            padx=18,
+            pady=14,
         )
-        filter_card.pack(fill="x", pady=(0, 14))
+        filter_card.pack(fill="x", pady=(0, 16))
 
-        f_grid = tk.Frame(filter_card, bg=self.colors["card_bg"])
+        f_grid = tk.Frame(filter_card, bg=self.colors["white"])
         f_grid.pack(fill="x")
+        f_grid.grid_columnconfigure(1, weight=1)
+
+        def _filter_label(parent, text):
+            return tk.Label(
+                parent,
+                text=text,
+                bg=self.colors["white"],
+                fg=self.colors["filter_label"],
+                font=("Segoe UI", 8, "bold"),
+            )
 
         # Status Filter
-        f_status_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
-        f_status_col.pack(side="left", padx=(0, 18))
-        tk.Label(
-            f_status_col,
-            text="FILTER STATUS",
-            bg=self.colors["card_bg"],
-            fg=self.colors["secondary_text"],
-            font=("Segoe UI", 8, "bold"),
-        ).pack(anchor="w", pady=(0, 4))
+        f_status_col = tk.Frame(f_grid, bg=self.colors["white"])
+        f_status_col.grid(row=0, column=0, sticky="nsw", padx=(0, 20))
+        _filter_label(f_status_col, "FILTER STATUS").pack(anchor="w", pady=(0, 6))
 
         self.match_filter_var = tk.StringVar(value="All")
         status_cb = ttk.Combobox(
@@ -1685,22 +1719,16 @@ class Application(tk.Tk):
             textvariable=self.match_filter_var,
             state="readonly",
             values=["All", "Unmatched", "Posted", "Matched", "All Splits Completed"],
-            width=20,
+            width=22,
             font=("Segoe UI", 9),
         )
-        status_cb.pack(anchor="w")
+        status_cb.pack(anchor="w", ipady=2)
         status_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_filter())
 
-        # Search Here Entry
-        f_search_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
-        f_search_col.pack(side="left", fill="x", expand=True, padx=(0, 18))
-        tk.Label(
-            f_search_col,
-            text="SEARCH TRANSACTIONS",
-            bg=self.colors["card_bg"],
-            fg=self.colors["secondary_text"],
-            font=("Segoe UI", 8, "bold"),
-        ).pack(anchor="w", pady=(0, 4))
+        # Search Entry
+        f_search_col = tk.Frame(f_grid, bg=self.colors["white"])
+        f_search_col.grid(row=0, column=1, sticky="ew", padx=(0, 20))
+        _filter_label(f_search_col, "SEARCH TRANSACTIONS").pack(anchor="w", pady=(0, 6))
 
         search_wrap = tk.Frame(
             f_search_col,
@@ -1710,6 +1738,13 @@ class Application(tk.Tk):
         )
         search_wrap.pack(fill="x")
         self.search_var = tk.StringVar()
+        tk.Label(
+            search_wrap,
+            text="🔍",
+            bg=self.colors["white"],
+            fg=self.colors["muted_text"],
+            font=("Segoe UI Emoji", 10),
+        ).pack(side="left", padx=(8, 4))
         search_entry = tk.Entry(
             search_wrap,
             textvariable=self.search_var,
@@ -1719,25 +1754,25 @@ class Application(tk.Tk):
             bd=0,
             highlightthickness=0,
         )
-        search_entry.pack(side="left", fill="x", expand=True, padx=8, pady=4)
-        tk.Label(search_wrap, text="🔍", bg=self.colors["white"], fg=self.colors["muted_text"]).pack(side="right", padx=6)
+        search_entry.pack(side="left", fill="x", expand=True, padx=(0, 8), pady=6)
         self.search_var.trace_add("write", lambda *args: self._apply_filter())
 
         # Bulk Paste Mode Checkbox
-        f_chk_col = tk.Frame(f_grid, bg=self.colors["card_bg"])
-        f_chk_col.pack(side="right")
+        f_chk_col = tk.Frame(f_grid, bg=self.colors["white"])
+        f_chk_col.grid(row=0, column=2, sticky="ns")
+        _filter_label(f_chk_col, "OPTIONS").pack(anchor="w", pady=(0, 6))
         tk.Checkbutton(
             f_chk_col,
             text="Bulk paste mode",
             variable=self.bulk_paste_mode_var,
             command=self._persist_bulk_paste_mode,
-            bg=self.colors["card_bg"],
-            activebackground=self.colors["card_bg"],
+            bg=self.colors["white"],
+            activebackground=self.colors["white"],
             fg=self.colors["dark_text"],
             selectcolor="white",
             font=("Segoe UI", 9),
             cursor="hand2",
-        ).pack(anchor="e", pady=(14, 0))
+        ).pack(anchor="w", pady=(2, 0))
 
         # ===================================================================
         # 3. TRANSACTIONS VIEW CANVAS AREA (#EAE5E4)
@@ -1766,7 +1801,7 @@ class Application(tk.Tk):
         self.cards_canvas.grid(row=0, column=0, sticky="nsew")
         cards_scroll.grid(row=0, column=1, sticky="ns")
 
-        self.cards_frame = tk.Frame(self.cards_canvas, bg=self.colors["page_bg"])
+        self.cards_frame = tk.Frame(self.cards_canvas, bg=self.colors["page_bg"], padx=2, pady=4)
         self.cards_canvas_window_id = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
         self.cards_frame.bind("<Configure>", self._on_cards_frame_configure)
         self.cards_canvas.bind("<Configure>", self._on_cards_canvas_configure)
@@ -1774,26 +1809,19 @@ class Application(tk.Tk):
         cards_host.bind("<Leave>", self._deactivate_cards_scroll, add="+")
 
         # Footer Status Bar
-        footer = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=18, pady=8)
+        footer = tk.Frame(self.app_view, bg=self.colors["page_bg"], padx=20, pady=10)
         footer.pack(fill="x")
 
         self.section_count_label = tk.Label(
             footer,
-            text="Sales Acc Receipt Gen (0 batches / 0 sub-batches)",
+            text="0 batches · 0 sub-batches",
             font=("Segoe UI", 9),
             fg=self.colors["muted"],
             bg=self.colors["page_bg"],
         )
         self.section_count_label.pack(side="left")
 
-        self.row_count_label = tk.Label(
-            footer,
-            text="0 batches | 0 sub-batches",
-            font=("Segoe UI", 9),
-            fg=self.colors["muted"],
-            bg=self.colors["page_bg"],
-        )
-        self.row_count_label.pack(side="left", padx=(12, 0))
+        self.row_count_label = None
 
         self.status_bar = tk.Label(
             footer,
@@ -1985,6 +2013,22 @@ class Application(tk.Tk):
             pady=10,
         )
         self.welcome_login_button.pack()
+
+        self.welcome_login_inline = tk.Frame(login_card, bg=login_panel_bg)
+        self.welcome_login_progress = ttk.Progressbar(
+            self.welcome_login_inline, mode="indeterminate", length=220
+        )
+        self.welcome_login_progress.pack(pady=(4, 6))
+        self.welcome_login_status_label = tk.Label(
+            self.welcome_login_inline,
+            text="",
+            bg=login_panel_bg,
+            fg=login_hint_fg,
+            font=("Segoe UI", 9),
+        )
+        self.welcome_login_status_label.pack()
+        # Not packed initially; shown only while logging in.
+
         tk.Label(
             login_card,
             text="You will be redirected to Microsoft sign-in in your browser.",
@@ -1994,6 +2038,46 @@ class Application(tk.Tk):
         ).pack(pady=(16, 0))
 
         return welcome
+
+    def _show_inline_login_loader(self, subtitle: str = "Launching browser and loading sign-in page"):
+        if not getattr(self, "welcome_login_inline", None):
+            return
+        try:
+            self.welcome_login_status_label.config(text=subtitle, fg=self.colors["secondary_text"])
+            if not self.welcome_login_inline.winfo_ismapped():
+                self.welcome_login_inline.pack(pady=(14, 0))
+            self.welcome_login_progress.start(12)
+        except tk.TclError:
+            pass
+
+    def _update_inline_login_loader(self, subtitle: str):
+        if not getattr(self, "welcome_login_inline", None):
+            return
+        try:
+            self.welcome_login_status_label.config(text=subtitle, fg=self.colors["secondary_text"])
+        except tk.TclError:
+            pass
+
+    def _show_inline_login_success(self, subtitle: str = "Login successful", auto_hide_ms: int = 1200):
+        if not getattr(self, "welcome_login_inline", None):
+            return
+        try:
+            self.welcome_login_progress.stop()
+            self.welcome_login_status_label.config(text=f"\u2713 {subtitle}", fg=self.colors["success"])
+        except tk.TclError:
+            return
+        self.after(max(0, int(auto_hide_ms)), self._hide_inline_login_loader)
+
+    def _hide_inline_login_loader(self):
+        if not getattr(self, "welcome_login_inline", None):
+            return
+        try:
+            self.welcome_login_progress.stop()
+            if self.welcome_login_inline.winfo_ismapped():
+                self.welcome_login_inline.pack_forget()
+            self.welcome_login_status_label.config(text="")
+        except tk.TclError:
+            pass
 
     def _update_auth_ui_mode(self):
         if not self.root_frame:
@@ -2047,7 +2131,7 @@ class Application(tk.Tk):
             status_text = (normalized_name or "Logged In") if valid else ""
         self.session_status_label.config(
             text=status_text,
-            bg=self.colors["accent"] if valid else self.colors["pill_bg"],
+            bg="#3B5998" if valid else self.colors["pill_bg"],
             fg="white" if valid else self.colors["dark_text"],
         )
 
@@ -2329,6 +2413,7 @@ class Application(tk.Tk):
     def _clear_transaction_data(self):
         self.batch_groups = []
         self.all_rows = []
+        self._transaction_edits.clear()
         self.selected_batch_var.set("")
         self.current_batch_count = 0
         self.current_sub_batch_count = 0
@@ -2336,8 +2421,6 @@ class Application(tk.Tk):
             for widget in self.cards_frame.winfo_children():
                 widget.destroy()
         self.row_vars.clear()
-        if self.row_count_label:
-            self.row_count_label.config(text="0 batches | 0 sub-batches")
         self._refresh_match_counts([])
         if self.status_bar:
             self.status_bar.config(text="Login required")
@@ -2608,10 +2691,8 @@ class Application(tk.Tk):
         sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in groups)
         if self.section_count_label:
             self.section_count_label.configure(
-                text=f"Sales Acc Receipt Gen ({batch_count} batches / {sub_batch_count} sub-batches)"
+                text=f"{batch_count} batch{'es' if batch_count != 1 else ''} · {sub_batch_count} sub-batch{'es' if sub_batch_count != 1 else ''}"
             )
-        if self.row_count_label:
-            self.row_count_label.config(text=f"{batch_count} batches | {sub_batch_count} sub-batches")
 
     def _status_text(self) -> str:
         selected_batch_id = self.selected_batch_var.get().strip()
@@ -2620,19 +2701,119 @@ class Application(tk.Tk):
             return f"{base} | Selected batch: {selected_batch_id}"
         return f"{base} | Selected batch: None"
 
+    def _mirror_record_for_paste(self, record: dict) -> None:
+        """Mirror UI-edited fields into alias keys used by D365 bulk paste columns."""
+        payment_ref = str(record.get("payment_reference", "")).strip()
+        if payment_ref:
+            record["description"] = payment_ref
+
+        value_date = str(record.get("value_date", "")).strip()
+        if value_date:
+            record["date"] = value_date
+
+        reference_date = str(record.get("reference_date", "")).strip()
+        if reference_date:
+            record["account_date"] = reference_date
+
+    def _read_row_widget_values(self, row_widgets: dict) -> dict[str, str]:
+        """Read current values from a row's StringVars / Entry widgets."""
+        values: dict[str, str] = {}
+        sync_keys = set(TABLE_EDITABLE_KEYS)
+        sync_keys.update(key for key, _label in DISPLAY_COL_DEFS)
+        entries = row_widgets.get("_entries") or {}
+        for key in sync_keys:
+            if key not in row_widgets:
+                continue
+            value = row_widgets[key].get()
+            entry = entries.get(key)
+            if entry is not None:
+                try:
+                    value = entry.get()
+                except tk.TclError:
+                    pass
+            if key in DATE_FIELD_KEYS:
+                value = format_d365_date(value)
+            values[key] = value
+        return values
+
+    def _apply_row_widget_values(self, record: dict, values: dict[str, str]) -> None:
+        for key, value in values.items():
+            record[key] = value
+        self._mirror_record_for_paste(record)
+
+    def _sync_row_widgets(self, row_widgets: dict) -> None:
+        data_ref = row_widgets.get("data")
+        if not isinstance(data_ref, dict):
+            return
+        values = self._read_row_widget_values(row_widgets)
+        self._apply_row_widget_values(data_ref, values)
+        uuid = str(data_ref.get("uuid", "")).strip()
+        if not uuid:
+            return
+        stored = dict(values)
+        for alias_key in ("description", "date", "account_date"):
+            alias_value = str(data_ref.get(alias_key, "")).strip()
+            if alias_value:
+                stored[alias_key] = alias_value
+        self._transaction_edits[uuid] = stored
+
     def _sync_current_edits(self):
+        """Write in-table edits back to the underlying transaction dicts."""
+        self.update_idletasks()
+        try:
+            focused = self.focus_get()
+            if focused is not None and isinstance(focused, tk.Entry):
+                focused.update_idletasks()
+            if focused is not None and focused is not self:
+                self.focus_set()
+                self.update_idletasks()
+        except tk.TclError:
+            pass
+
+        for row_widgets in self.row_vars:
+            self._sync_row_widgets(row_widgets)
+
+    def _edited_records_by_uuid(self, *, sync_first: bool = True) -> dict[str, dict]:
+        """Map transaction uuid -> live edited record dict from visible table rows."""
+        if sync_first:
+            self._sync_current_edits()
+        edited: dict[str, dict] = {}
         for row_widgets in self.row_vars:
             data_ref = row_widgets.get("data")
             if not isinstance(data_ref, dict):
                 continue
-            for key in KEY_MAP[1:]:
-                if key in row_widgets:
-                    value = row_widgets[key].get()
-                    if key in DATE_FIELD_KEYS:
-                        value = format_d365_date(value)
-                    data_ref[key] = value
-            if "sub_batch_id" in row_widgets:
-                data_ref["sub_batch_id"] = row_widgets["sub_batch_id"].get()
+            uuid = str(data_ref.get("uuid", "")).strip()
+            if uuid:
+                edited[uuid] = data_ref
+        return edited
+
+    def _transactions_for_automation(self, batch_info: dict) -> list[dict]:
+        """Return a fresh copy of batch transactions including any in-table edits."""
+        self._sync_current_edits()
+        edited_live = self._edited_records_by_uuid(sync_first=False)
+        selected_batch_id = str(batch_info.get("batch_id", "")).strip()
+        result: list[dict] = []
+        for sub_batch in batch_info.get("sub_batches", []):
+            for record in sub_batch.get("transactions", []):
+                uuid = str(record.get("uuid", "")).strip()
+                copy = dict(record)
+                if uuid and uuid in self._transaction_edits:
+                    copy.update(self._transaction_edits[uuid])
+                elif uuid and uuid in edited_live:
+                    live = edited_live[uuid]
+                    for key in TABLE_EDITABLE_KEYS:
+                        if key in live:
+                            copy[key] = live[key]
+                copy["batch_id"] = selected_batch_id or copy.get("batch_id", "")
+                sub_batch_id = str(sub_batch.get("sub_batch_id", "")).strip()
+                if sub_batch_id:
+                    copy["sub_batch_id"] = sub_batch_id
+                for key in DATE_FIELD_KEYS:
+                    if key in copy:
+                        copy[key] = format_d365_date(copy.get(key, ""))
+                self._mirror_record_for_paste(copy)
+                result.append(copy)
+        return result
 
     def _render_rows(self, batch_groups):
         if not self.cards_frame:
@@ -2646,17 +2827,23 @@ class Application(tk.Tk):
         self.current_sub_batch_count = sum(len(batch.get("sub_batches", [])) for batch in batch_groups)
 
         if not batch_groups:
-            empty = tk.Label(
-                self.cards_frame,
-                text="No records for current filter",
-                bg=self.colors["frame_bg"],
+            empty_wrap = tk.Frame(self.cards_frame, bg=self.colors["page_bg"])
+            empty_wrap.pack(fill="both", expand=True, pady=48)
+            tk.Label(
+                empty_wrap,
+                text="No records found",
+                bg=self.colors["page_bg"],
+                fg=self.colors["dark_text"],
+                font=("Segoe UI", 12, "bold"),
+            ).pack()
+            tk.Label(
+                empty_wrap,
+                text="Try changing the filter or refresh transactions",
+                bg=self.colors["page_bg"],
                 fg=self.colors["muted"],
-                font=("Segoe UI", 11),
-                pady=24,
-            )
-            empty.pack(fill="x")
-            if self.row_count_label:
-                self.row_count_label.config(text="0 batches | 0 sub-batches")
+                font=("Segoe UI", 10),
+            ).pack(pady=(6, 0))
+            self._refresh_match_counts([])
             return
 
         col_defs = [
@@ -2673,17 +2860,17 @@ class Application(tk.Tk):
 
             card = tk.Frame(
                 self.cards_frame,
-                bg=self.colors["card_bg"],
+                bg=self.colors["white"],
                 highlightbackground=self.colors["card_selected_border"] if batch_selected else self.colors["card_border"],
                 highlightthickness=2 if batch_selected else 1,
                 bd=0,
-                padx=10,
-                pady=10,
+                padx=12,
+                pady=12,
             )
-            card.pack(fill="x", pady=(0, 12))
+            card.pack(fill="x", pady=(0, 14))
 
-            header = tk.Frame(card, bg=self.colors["card_header_bg"], height=42)
-            header.pack(fill="x")
+            header = tk.Frame(card, bg=self.colors["card_header_bg"], height=46)
+            header.pack(fill="x", padx=1, pady=(0, 8))
             header.pack_propagate(False)
 
             radio_btn = _make_button(
@@ -2701,7 +2888,7 @@ class Application(tk.Tk):
                 highlightthickness=0,
                 command=lambda bid=batch_id: self._toggle_batch_selection(bid),
             )
-            radio_btn.pack(side="left", padx=(0, 8))
+            radio_btn.pack(side="left", padx=(8, 10))
             self._style_batch_radio_button(radio_btn, batch_selected)
 
             title_wrap = tk.Frame(header, bg=self.colors["card_header_bg"], cursor="hand2")
@@ -2711,21 +2898,21 @@ class Application(tk.Tk):
                 text=batch_id,
                 bg=self.colors["card_header_bg"],
                 fg=self.colors["title"],
-                font=("Segoe UI", 9, "bold"),
+                font=("Segoe UI", 10, "bold"),
                 anchor="w",
                 cursor="hand2",
             )
             lbl1.pack(anchor="w")
             lbl2 = tk.Label(
                 title_wrap,
-                text=f"{len(sub_batches)} sub-batches",
+                text=f"{len(sub_batches)} sub-batch{'es' if len(sub_batches) != 1 else ''}",
                 bg=self.colors["card_header_bg"],
                 fg=self.colors["muted"],
                 font=("Segoe UI", 8),
                 anchor="w",
                 cursor="hand2",
             )
-            lbl2.pack(anchor="w")
+            lbl2.pack(anchor="w", pady=(1, 0))
 
             for widget in (header, title_wrap, lbl1, lbl2):
                 widget.bind("<Button-1>", lambda _e, bid=batch_id: self._toggle_batch_selection(bid))
@@ -2752,11 +2939,11 @@ class Application(tk.Tk):
 
             tk.Label(
                 header,
-                text=f"{total_transactions} transactions",
+                text=f"{total_transactions} transaction{'s' if total_transactions != 1 else ''}",
                 bg=self.colors["card_header_bg"],
-                fg=self.colors["text"],
-                font=("Segoe UI", 10, "bold"),
-            ).pack(side="right", padx=(0, 4))
+                fg=self.colors["secondary_text"],
+                font=("Segoe UI", 9, "bold"),
+            ).pack(side="right", padx=(0, 10))
 
             for sub_batch in sub_batches:
                 sub_batch_id = str(sub_batch.get("sub_batch_id", "")).strip() or batch_id
@@ -2768,17 +2955,17 @@ class Application(tk.Tk):
                     highlightbackground=self.colors["table_border"],
                     highlightthickness=1,
                     bd=0,
-                    padx=8,
-                    pady=8,
+                    padx=10,
+                    pady=10,
                 )
-                sub_card.pack(fill="x", pady=(8, 2))
+                sub_card.pack(fill="x", pady=(0, 4))
 
-                sub_header = tk.Frame(sub_card, bg=self.colors["table_header_bg"], height=34)
+                sub_header = tk.Frame(sub_card, bg=self.colors["table_header_bg"], height=36)
                 sub_header.pack(fill="x")
                 sub_header.pack_propagate(False)
 
                 sub_title = tk.Frame(sub_header, bg=self.colors["table_header_bg"])
-                sub_title.pack(side="left", fill="x", expand=True, padx=(4, 0))
+                sub_title.pack(side="left", fill="x", expand=True, padx=(10, 0))
                 tk.Label(
                     sub_title,
                     text=sub_batch_id,
@@ -2790,24 +2977,22 @@ class Application(tk.Tk):
 
                 tk.Label(
                     sub_header,
-                    text=f"{len(sub_rows)} transactions",
+                    text=f"{len(sub_rows)} transaction{'s' if len(sub_rows) != 1 else ''}",
                     bg=self.colors["table_header_bg"],
-                    fg=self.colors["text"],
+                    fg=self.colors["secondary_text"],
                     font=("Segoe UI", 9, "bold"),
-                ).pack(side="right", padx=(0, 4))
+                ).pack(side="right", padx=(0, 10))
 
                 scroll_table = ScrollableTransactionTable(
                     sub_card,
                     col_defs,
                     self.colors,
+                    on_row_edit=self._sync_row_widgets,
                 )
-                scroll_table.pack(fill="x", padx=4, pady=(8, 2))
+                scroll_table.pack(fill="x", padx=2, pady=(8, 2))
                 scroll_table.populate_rows(sub_rows, self.row_vars, self._row_key)
 
-        if self.row_count_label:
-            self.row_count_label.config(
-                text=f"{self.current_batch_count} batches | {self.current_sub_batch_count} sub-batches"
-            )
+        self._refresh_match_counts(batch_groups)
         self._refresh_cards_canvas()
         self.after_idle(self._refresh_cards_canvas)
 
@@ -3017,6 +3202,7 @@ class Application(tk.Tk):
     def _apply_loaded_transactions(self, batch_groups, data):
         self.batch_groups = batch_groups
         self.all_rows = data
+        self._transaction_edits.clear()
         valid_batch_ids = {
             str(batch.get("batch_id", "")).strip()
             for batch in batch_groups
@@ -3076,11 +3262,17 @@ class Application(tk.Tk):
         except Exception as err:
             messagebox.showerror("Export Error", f"Failed to export: {err}")
 
-    def _show_automation_loader(self):
+    def _show_automation_loader(
+        self,
+        *,
+        title: str = "Starting automation...",
+        subtitle: str = "Preparing D365 and your selected transactions",
+        dialog_title: str = "Starting Automation",
+    ):
         self._hide_automation_loader()
         dialog = tk.Toplevel(self)
         self._busy_dialog = dialog
-        dialog.title("Starting Automation")
+        dialog.title(dialog_title)
         dialog.resizable(False, False)
         dialog.configure(bg=self.colors["white"])
         dialog.transient(self)
@@ -3088,30 +3280,76 @@ class Application(tk.Tk):
 
         body = tk.Frame(dialog, bg=self.colors["white"], padx=34, pady=26)
         body.pack(fill="both", expand=True)
-        tk.Label(
+        title_label = tk.Label(
             body,
-            text="Starting automation...",
+            text=title,
             bg=self.colors["white"],
             fg=self.colors["dark_text"],
             font=("Segoe UI", 12, "bold"),
-        ).pack()
-        tk.Label(
+        )
+        title_label.pack()
+        subtitle_label = tk.Label(
             body,
-            text="Preparing D365 and your selected transactions",
+            text=subtitle,
             bg=self.colors["white"],
             fg=self.colors["secondary_text"],
             font=("Segoe UI", 9),
-        ).pack(pady=(6, 14))
+        )
+        subtitle_label.pack(pady=(6, 14))
         progress = ttk.Progressbar(body, mode="indeterminate", length=300)
         progress.pack(fill="x")
         progress.start(12)
         dialog._busy_progress = progress
+        dialog._busy_title_label = title_label
+        dialog._busy_subtitle_label = subtitle_label
 
         dialog.update_idletasks()
         x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
         y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
         dialog.grab_set()
+
+    def _update_automation_loader(self, *, title: Optional[str] = None, subtitle: Optional[str] = None):
+        dialog = self._busy_dialog
+        if dialog is None or not dialog.winfo_exists():
+            return
+        if title and hasattr(dialog, "_busy_title_label"):
+            dialog._busy_title_label.config(text=title)
+        if subtitle and hasattr(dialog, "_busy_subtitle_label"):
+            dialog._busy_subtitle_label.config(text=subtitle)
+
+    def _show_loader_success(
+        self,
+        *,
+        title: str = "Done",
+        subtitle: str = "",
+        auto_close_ms: int = 1400,
+    ):
+        """Morph the busy loader into an inline success state and auto-dismiss it (no popup)."""
+        dialog = self._busy_dialog
+        if dialog is None or not dialog.winfo_exists():
+            return
+        try:
+            if hasattr(dialog, "_busy_progress"):
+                dialog._busy_progress.stop()
+                dialog._busy_progress.pack_forget()
+            if not hasattr(dialog, "_busy_check_label"):
+                check_label = tk.Label(
+                    dialog._busy_title_label.master,
+                    text="\u2713",
+                    bg=self.colors["white"],
+                    fg=self.colors["success"],
+                    font=("Segoe UI", 22, "bold"),
+                )
+                check_label.pack(before=dialog._busy_title_label, pady=(0, 6))
+                dialog._busy_check_label = check_label
+            if hasattr(dialog, "_busy_title_label"):
+                dialog._busy_title_label.config(text=title, fg=self.colors["success"])
+            if hasattr(dialog, "_busy_subtitle_label"):
+                dialog._busy_subtitle_label.config(text=subtitle)
+        except tk.TclError:
+            return
+        dialog.after(max(0, int(auto_close_ms)), self._hide_automation_loader)
 
     def _hide_automation_loader(self):
         dialog = self._busy_dialog
@@ -3144,23 +3382,29 @@ class Application(tk.Tk):
             return
 
         batch_id = str(selected_group.get("batch_id", "")).strip() or "UNASSIGNED"
-        selected = [
-            dict(record)
-            for sub_batch in selected_group.get("sub_batches", [])
-            for record in sub_batch.get("transactions", [])
-        ]
-        for record in selected:
-            for key in DATE_FIELD_KEYS:
-                if key in record:
-                    record[key] = format_d365_date(record.get(key, ""))
         sub_batch_count = len(selected_group.get("sub_batches", []))
-        transaction_count = len(selected)
+        transaction_count = self._batch_transaction_count(selected_group)
 
-        if not selected:
+        if not transaction_count:
             messagebox.showwarning("No Transactions", "The selected batch does not contain any transactions.")
             return
 
         if self._confirm_automation_dialog(batch_id, sub_batch_count, transaction_count):
+            selected = self._transactions_for_automation(selected_group)
+            if not selected:
+                messagebox.showwarning("No Transactions", "The selected batch does not contain any transactions.")
+                return
+            if not self._validate_config_for_action(require_auth_state=True):
+                return
+            sample = selected[0]
+            print(
+                "Automation payload sample — "
+                f"value_date={sample.get('value_date', '')}, "
+                f"reference_date={sample.get('reference_date', '')}, "
+                f"date={sample.get('date', '')}, "
+                f"payment_reference={str(sample.get('payment_reference', ''))[:60]}, "
+                f"description={str(sample.get('description', ''))[:60]}"
+            )
             if not self._validate_config_for_action(require_auth_state=True):
                 return
             bulk_mode = self.bulk_paste_mode_var.get()
@@ -3496,25 +3740,52 @@ class Application(tk.Tk):
         if not self._bootstrap_login_config_if_needed():
             return
 
+        self._show_inline_login_loader("Launching browser and loading sign-in page")
+        if self.welcome_login_button:
+            self.welcome_login_button.config(
+                state="disabled",
+                bg="#6c757d",
+                cursor="watch",
+                text="Opening...",
+            )
+
         def run_task():
             try:
                 if automation_module is None:
                     raise ImportError(f"automation module import failed: {AUTOMATION_IMPORT_ERROR}")
-                # Use after to show info on main thread
-                # self.after(0, lambda: messagebox.showinfo("Info", "Starting Login Automation..."))
+
+                ok, _detail = automation_module.is_playwright_chromium_available()
+                if not ok:
+                    self.after(
+                        0,
+                        lambda: self._update_inline_login_loader(
+                            "Downloading Playwright Chromium (one-time setup)"
+                        ),
+                    )
+                    install_ok, output = automation_module.install_playwright_chromium()
+                    if not install_ok:
+                        raise RuntimeError(output or "Failed to install Chromium browser.")
+                    self.after(
+                        0,
+                        lambda: self._update_inline_login_loader(
+                            "Launching browser and loading sign-in page"
+                        ),
+                    )
+
                 print("--- Login Automation Started ---")
                 auth_result = automation_module.test_loginfunctionality()
                 print("--- Login Automation Finished ---")
                 self.after(0, lambda result=auth_result: self._apply_auth_result(result, invalidate_pending=True))
-                self.after(0, lambda: messagebox.showinfo("Success", "Login automation completed."))
+                self.after(0, lambda: self._show_inline_login_success("Login successful"))
             except Exception as e:
                 print(f"Login error: {e}")
+                self.after(0, self._hide_inline_login_loader)
                 self.after(0, self._refresh_login_button_async)
                 if self._is_missing_playwright_browser_error(e):
                     self.after(0, lambda err=e: self._offer_browser_download(err, "Login"))
                 else:
                     self.after(0, lambda err=e: messagebox.showerror("Error", f"Login failed: {err}"))
-        
+
         threading.Thread(target=run_task, daemon=True).start()
 
 
