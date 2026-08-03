@@ -1446,7 +1446,16 @@ def _focus_journal_row_at(page, row_index: int) -> None:
     _scroll_journal_row_into_view(row)
     if page.locator(_JOURNAL_DATA_ROW_SEL).count():
         date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
-        date_input.wait_for(state="visible", timeout=8000)
+        try:
+            date_input.wait_for(state="visible", timeout=4000)
+        except PlaywrightTimeoutError:
+            # Column likely scrolled out of view / virtualized away; reset horizontal
+            # scroll to the Date column and give it one more chance before giving up.
+            _scroll_journal_grid_to_start(page)
+            row = _journal_line_row_at_exact(page, row_index)
+            _scroll_journal_row_into_view(row)
+            date_input = row.locator('input[aria-label="Date"]:not([readonly])').first
+            date_input.wait_for(state="visible", timeout=6000)
         _click_locator_robust(date_input, page, label=f"Date input row {row_index + 1}")
         page.keyboard.press("Home")
         return
@@ -1480,6 +1489,44 @@ def _journal_grid_row(page, row_index: int):
     if pick < count:
         return rows.nth(pick)
     return rows.nth(count - 1)
+
+
+def _scroll_journal_grid_to_start(page) -> None:
+    """Reset the journal grid's horizontal scroll so the Date column (leftmost) is visible.
+
+    D365's journal grid virtualizes/hides off-screen columns, so after interacting with a
+    column further to the right (e.g. Reference date), the Date column's input can become
+    zero-size / non-visible even though it still exists in the DOM. Scrolling any horizontally
+    scrollable ancestor back to the start avoids Playwright visibility timeouts on Date.
+    """
+    try:
+        page.evaluate(
+            """
+            () => {
+                const grid = document.querySelector('[role="grid"][aria-label="Journal lines"]');
+                if (!grid) return;
+                const candidates = [grid, ...grid.querySelectorAll('*')];
+                let parent = grid.parentElement;
+                while (parent) {
+                    candidates.push(parent);
+                    parent = parent.parentElement;
+                }
+                for (const el of candidates) {
+                    const st = window.getComputedStyle(el);
+                    const overflowX = st.overflowX;
+                    if (
+                        (overflowX === 'auto' || overflowX === 'scroll')
+                        && el.scrollWidth > el.clientWidth + 4
+                        && el.scrollLeft > 0
+                    ) {
+                        el.scrollLeft = 0;
+                    }
+                }
+            }
+            """
+        )
+    except PlaywrightError:
+        pass
 
 
 def _scroll_journal_row_into_view(row) -> None:
@@ -1526,6 +1573,7 @@ def _scroll_journal_row_into_view(row) -> None:
         page.wait_for_timeout(150)
     except (PlaywrightTimeoutError, PlaywrightError):
         pass
+    _scroll_journal_grid_to_start(page)
 
 
 def _click_locator_robust(locator, page, *, label: str = "element", timeout: int = 5000) -> None:
@@ -2003,6 +2051,7 @@ def _prepare_journal_grid_for_interaction(page) -> None:
         )
     except PlaywrightError:
         pass
+    _scroll_journal_grid_to_start(page)
     try:
         page.locator("#ShellBlockingDiv").wait_for(state="hidden", timeout=3000)
     except PlaywrightTimeoutError:
@@ -2020,41 +2069,68 @@ def _repaste_and_save_row_with_retry(
     use_live_order: bool = False,
     save_label: str | None = None,
 ) -> None:
-    """Re-paste one journal row and save, retrying the same row after user resolves validation."""
+    """Paste one journal row and save; if D365 raises a validation issue, wait for the user
+    to fix it directly in the grid and just re-save — never re-paste over a manual fix."""
     label = save_label or f"after complete row {row_index + 1} re-paste"
     attempt = 0
+    pasted = False
+    grid_reset_attempts = 0
+    max_grid_reset_attempts = 6
     while True:
         attempt += 1
         _automation_checkpoint(page, controller)
         _gate_if_validation_issue(page, controller)
         if attempt > 1:
-            print(f"Row {row_index + 1}: retrying re-paste and save (attempt {attempt})...")
+            print(f"Row {row_index + 1}: re-saving after user fix (attempt {attempt})...")
         try:
             _prepare_journal_grid_for_interaction(page)
-            _repaste_pasted_row(
-                page,
-                record,
-                row_index,
-                col_defs,
-                use_live_order=use_live_order,
-            )
-            _wait_for_journal_grid_idle(page)
-            _dismiss_d365_validation_dialog(page)
+            if not pasted:
+                _repaste_pasted_row(
+                    page,
+                    record,
+                    row_index,
+                    col_defs,
+                    use_live_order=use_live_order,
+                )
+                pasted = True
+                _wait_for_journal_grid_idle(page)
+                _dismiss_d365_validation_dialog(page)
+                # Segmented lookups (Account, Method of payment) resolve asynchronously
+                # after paste; wait for them to settle before saving, otherwise D365 can
+                # drop the not-yet-confirmed value and save the field blank.
+                lookup_issues = _wait_for_pasted_row_issues(page, record, row_index, timeout_ms=8000)
+                if lookup_issues:
+                    print(
+                        f"Row {row_index + 1}: still resolving after paste "
+                        f"({'; '.join(lookup_issues)}); saving anyway."
+                    )
             _save_journal_grid(page, label)
             _wait_for_journal_grid_idle(page)
             _dismiss_d365_validation_dialog(page)
         except AutomationStoppedByUser:
             raise
-        except PlaywrightError as err:
+        except (PlaywrightError, PlaywrightTimeoutError) as err:
             msg = str(err).casefold()
-            if "outside of the viewport" in msg or "not visible" in msg or "intercept" in msg:
+            transient = (
+                "outside of the viewport" in msg
+                or "not visible" in msg
+                or "to be visible" in msg
+                or "intercept" in msg
+                or "timeout" in msg
+                or "detached" in msg
+            )
+            grid_reset_attempts += 1
+            if transient and grid_reset_attempts <= max_grid_reset_attempts:
                 print(
                     f"Row {row_index + 1}: grid interaction failed ({err}); "
-                    "resetting grid view and retrying..."
+                    f"resetting grid view and retrying (reset {grid_reset_attempts}/{max_grid_reset_attempts})..."
                 )
+                _automation_checkpoint(page, controller)
+                _interruptible_wait(page, 600, controller)
                 _prepare_journal_grid_for_interaction(page)
                 continue
             raise
+        grid_reset_attempts = 0
         issue = _read_d365_validation_issue(page)
         if not issue:
             print(f"Row {row_index + 1}: saved successfully.")
