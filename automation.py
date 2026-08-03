@@ -2095,15 +2095,6 @@ def _repaste_and_save_row_with_retry(
                 pasted = True
                 _wait_for_journal_grid_idle(page)
                 _dismiss_d365_validation_dialog(page)
-                # Segmented lookups (Account, Method of payment) resolve asynchronously
-                # after paste; wait for them to settle before saving, otherwise D365 can
-                # drop the not-yet-confirmed value and save the field blank.
-                lookup_issues = _wait_for_pasted_row_issues(page, record, row_index, timeout_ms=8000)
-                if lookup_issues:
-                    print(
-                        f"Row {row_index + 1}: still resolving after paste "
-                        f"({'; '.join(lookup_issues)}); saving anyway."
-                    )
             _save_journal_grid(page, label)
             _wait_for_journal_grid_idle(page)
             _dismiss_d365_validation_dialog(page)
@@ -2842,7 +2833,10 @@ def _save_journal_grid(page, label: str) -> None:
                 timeout=5000,
                 force=True,
             )
-        _confirm_unsaved_changes_dialog(page, wait_ms=5000)
+        # The prompt (when D365 raises one) shows up within a few hundred ms. A longer poll
+        # just burns wall clock on every save that needs no confirmation; a late prompt is
+        # still picked up by the _confirm_unsaved_changes_dialog calls in the next step.
+        _confirm_unsaved_changes_dialog(page, wait_ms=1500)
         _wait_for_journal_grid_idle(page)
     print(f"Saved journal grid ({label}).")
 
@@ -2944,12 +2938,12 @@ def _wait_for_account_lookup(page, row_index: int, expected: str, timeout_ms: in
     return False
 
 
-def _type_pasted_account(page, record, row_index: int) -> bool:
+def _type_pasted_account(page, record, row_index: int, *, lookup_timeout_ms: int = 15000) -> bool:
     expected = str(record["account"]).strip()
     account_field = _account_field_at_row(page, row_index)
     account_field.wait_for(state="visible", timeout=int(CONFIG.get("page_load_timeout_ms", 60000)))
     _fill_account_lookup(account_field, expected)
-    if _wait_for_account_lookup(page, row_index, expected):
+    if _wait_for_account_lookup(page, row_index, expected, timeout_ms=lookup_timeout_ms):
         print(f"Row {row_index + 1}: typed Account into the segmented lookup.")
         return True
     return False
@@ -3112,6 +3106,41 @@ def _wait_for_pasted_row_issues(
         if not issues or time.monotonic() >= deadline:
             return issues
         page.wait_for_timeout(500)
+
+
+def _repair_pasted_account_in_place(
+    page,
+    record,
+    row_index: int,
+    controller: AutomationController | None = None,
+) -> bool:
+    """Type the Account straight into the segmented lookup and save just that fix.
+
+    Typing waits for the lookup to actually resolve before returning, so it is both quicker
+    and more deterministic than re-pasting all 27 columns and hoping the lookup wins the race.
+    Returns True only when the row reads clean afterwards.
+    """
+    expected = str(record.get("account", "")).strip()
+    if not expected:
+        return False
+
+    _automation_checkpoint(page, controller)
+    _prepare_journal_grid_for_interaction(page)
+    try:
+        if not _type_pasted_account(page, record, row_index, lookup_timeout_ms=6000):
+            print(f"Row {row_index + 1}: typed Account did not resolve; falling back to re-paste.")
+            return False
+        _dismiss_d365_validation_dialog(page)
+        _save_journal_grid(page, f"after row {row_index + 1} Account repair")
+        _wait_for_journal_grid_idle(page)
+    except AutomationStoppedByUser:
+        raise
+    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as err:
+        print(f"Row {row_index + 1}: Account repair failed ({err}); falling back to re-paste.")
+        return False
+
+    _gate_if_validation_issue(page, controller)
+    return not _wait_for_pasted_row_issues(page, record, row_index, timeout_ms=4000)
 
 
 def _repair_missing_pasted_accounts(page, records, col_defs, *, use_live_order: bool = False) -> int:
@@ -3381,6 +3410,9 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
         return
 
     for index in retry_indices:
+        if _repair_pasted_account_in_place(page, records[index], index, controller):
+            print(f"Row {index + 1}: repaired in place by typing the Account.")
+            continue
         _repaste_and_save_row_with_retry(
             page,
             records[index],
