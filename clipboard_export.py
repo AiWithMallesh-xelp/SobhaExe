@@ -133,7 +133,7 @@ def validate_live_paste_columns(col_defs: list) -> None:
 
 def normalize_date(date_str):
     """
-    Normalize date string to mm/dd/yyyy as standard format
+    Normalize date string to dd/mm/yyyy as standard format
     """
     if not date_str:
         return None
@@ -147,17 +147,17 @@ def normalize_date(date_str):
             if 30000 < excel_date < 50000:
                 base_date = datetime(1899, 12, 30)  # Excel's day 0
                 date_obj = base_date + timedelta(days=int(excel_date))
-                return date_obj.strftime('%m/%d/%Y')
+                return date_obj.strftime('%d/%m/%Y')
     except (ValueError, OverflowError):
         pass
 
     date_formats = [
-        # US formats first, since output is US-ordered
+        # DD/MM first, since output is DD/MM-ordered
+        '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y',
+        '%d/%m/%y', '%d-%m-%y', '%d.%m.%y',
+        '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%Y%m%d',
         '%m/%d/%Y', '%m-%d-%Y', '%m.%d.%Y',
         '%m/%d/%y', '%m-%d-%y', '%m.%d.%y',
-        '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%Y%m%d',
-        '%d-%m-%Y', '%d/%m/%Y', '%d.%m.%Y',
-        '%d-%m-%y', '%d/%m/%y', '%d.%m.%y',
         '%b %d, %Y', '%B %d, %Y', '%d %b %Y', '%d %B %Y',
         '%d-%b-%y', '%d-%B-%y', '%d-%b-%Y', '%d-%B-%Y',
         '%d %b %y', '%d %B %y', '%b %d %y', '%B %d %y',
@@ -166,7 +166,7 @@ def normalize_date(date_str):
 
     for fmt in date_formats:
         try:
-            return datetime.strptime(date_str, fmt).strftime('%m/%d/%Y')
+            return datetime.strptime(date_str, fmt).strftime('%d/%m/%Y')
         except ValueError:
             continue
 

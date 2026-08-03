@@ -1205,7 +1205,8 @@ class ScrollableTransactionTable(tk.Frame):
 
     def _configure_columns(self, parent_frame):
         for col_idx, (_key, _label, width) in enumerate(self.col_defs):
-            parent_frame.grid_columnconfigure(col_idx, minsize=width, weight=0)
+            # minsize includes padx=(6, 8) so header/body columns share identical slots
+            parent_frame.grid_columnconfigure(col_idx, minsize=width + 14, weight=0)
 
     def _bind_table_scroll(self, widget):
         """Bind wheel/swipe on every child so Entry widgets cannot eat horizontal swipe."""
@@ -1249,10 +1250,12 @@ class ScrollableTransactionTable(tk.Frame):
             cell = tk.Frame(
                 self.header_frame,
                 width=width,
+                height=self.HEADER_HEIGHT - 8,
                 bg=self.colors["table_header_bg"],
             )
-            cell.grid(row=0, column=col_idx, padx=(6, 8), pady=4, sticky="nsw")
+            cell.grid(row=0, column=col_idx, padx=(6, 8), pady=4, sticky="nw")
             cell.grid_propagate(False)
+            cell.pack_propagate(False)
             tk.Label(
                 cell,
                 text=label,
@@ -1314,8 +1317,9 @@ class ScrollableTransactionTable(tk.Frame):
 
             for col_idx, (key, _label, width) in enumerate(self.col_defs):
                 cell = tk.Frame(row_frame, width=width, height=self.ROW_HEIGHT - 4, bg=row_bg)
-                cell.grid(row=0, column=col_idx, padx=(6, 8), pady=2, sticky="nsew")
+                cell.grid(row=0, column=col_idx, padx=(6, 8), pady=2, sticky="nw")
                 cell.grid_propagate(False)
+                cell.pack_propagate(False)
                 if key in TABLE_EDITABLE_KEYS:
                     entry = tk.Entry(
                         cell,
@@ -1327,6 +1331,7 @@ class ScrollableTransactionTable(tk.Frame):
                         fg=self.colors["text"],
                         insertbackground=self.colors["text"],
                         font=self._cell_font,
+                        width=1,
                     )
                     entry.pack(fill="both", expand=True)
                 else:

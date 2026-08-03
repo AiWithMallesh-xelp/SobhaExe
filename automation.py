@@ -541,7 +541,7 @@ def _bulk_update_receipts(records, receipt_numbers) -> tuple[bool, str]:
 
 
 def _d365_date(date_text, fallback: str = "") -> str:
-    """Convert any supported date input to mm/dd/yyyy for D365."""
+    """Convert any supported date input to dd/mm/yyyy for D365."""
     if normalize_date is None:
         return str(date_text or "").strip() or fallback
     normalized = normalize_date(date_text)
