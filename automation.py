@@ -3135,36 +3135,48 @@ def _fill_focused_value_date(page, value: str) -> bool:
     return _type_value_date_on_row(page, row_index, value)
 
 
-def _type_value_date_on_row(page, row_index: int, value: str) -> bool:
-    """Fill Value date on a specific row's editable input and blur to commit (no Save click)."""
-    editable = page.locator(
-        f"{_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index)}:not([readonly])"
-    )
-    if editable.count() == 0:
-        return False
+def _activate_value_date_for_row(page, row_index: int) -> bool:
+    """Click Value date on the target row so D365 opens the editable input."""
+    target = page.locator(_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index))
+    if target.count() == 0:
+        rows = page.locator(_JOURNAL_DATA_ROW_SEL)
+        if rows.count() <= row_index:
+            return False
+        target = rows.nth(row_index).locator('input[aria-label="Value date"]').first
     try:
-        editable.first.fill(str(value), timeout=5000)
-        editable.first.evaluate(
-            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); }"
+        target.click(timeout=3000)
+        page.wait_for_timeout(200)
+        return (
+            page.locator(
+                f"{_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index)}:not([readonly])"
+            ).count()
+            > 0
         )
-        page.wait_for_timeout(150)
-        return True
     except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
         return False
 
 
-def _activate_value_date_for_row(page, row_index: int) -> bool:
-    """Click Value date on the target row so D365 swaps readonly → editable input."""
-    target = page.locator(_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index))
-    if target.count() == 0:
+def _type_value_date_on_row(page, row_index: int, value: str) -> bool:
+    """Type Value date on the target row input — always use locator.press, never page.keyboard Ctrl+A."""
+    selector = _journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index)
+    editable = page.locator(f"{selector}:not([readonly])")
+    if editable.count() == 0:
+        _activate_value_date_for_row(page, row_index)
+        editable = page.locator(f"{selector}:not([readonly])")
+    if editable.count() == 0:
         return False
     try:
-        target.first.click(timeout=3000)
-        page.wait_for_timeout(200)
-        editable = page.locator(
-            f"{_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index)}:not([readonly])"
+        target = editable.first
+        target.click(timeout=3000)
+        page.wait_for_timeout(100)
+        target.press("ControlOrMeta+a")
+        target.press("Backspace")
+        target.press_sequentially(str(value), delay=30)
+        target.evaluate(
+            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); }"
         )
-        return editable.count() > 0
+        page.wait_for_timeout(150)
+        return True
     except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
         return False
 
@@ -3192,7 +3204,6 @@ def _fill_value_date_after_save(
         if _focused_value_date_row_index(page) != row_index:
             _activate_value_date_for_row(page, row_index)
     else:
-        # Tab after save often lands on row 1 — activate the saved row directly.
         _activate_value_date_for_row(page, row_index)
     if _type_value_date_on_row(page, row_index, expected):
         if not _value_date_needs_fill(page, record, row_index):
