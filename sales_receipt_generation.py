@@ -26,23 +26,23 @@ def _create_startup_splash():
     try:
         splash = tk.Tk()
         splash.overrideredirect(True)
-        splash.configure(bg="#5E5453")
+        splash.configure(bg="#332C2B")
         splash.attributes("-topmost", True)
 
-        frame = tk.Frame(splash, bg="#5E5453", padx=42, pady=30)
+        frame = tk.Frame(splash, bg="#332C2B", padx=42, pady=30)
         frame.pack(fill="both", expand=True)
         tk.Label(
             frame,
             text="Sobha Reconciliation",
-            bg="#5E5453",
+            bg="#332C2B",
             fg="white",
             font=("Segoe UI", 16, "bold"),
         ).pack()
         tk.Label(
             frame,
             text="Starting...",
-            bg="#5E5453",
-            fg="#D2D5DB",
+            bg="#332C2B",
+            fg="#E5E7EB",
             font=("Segoe UI", 10),
         ).pack(pady=(8, 14))
         progress = ttk.Progressbar(frame, mode="indeterminate", length=260)
@@ -1504,36 +1504,36 @@ class Application(tk.Tk):
 
         # SOBHA Premium Theme Palette
         self.colors = {
-            "primary_bg": "#5E5453",          # SOBHA Primary Header / Sidebar
+            "primary_bg": "#332C2B",          # SOBHA Primary Header / Sidebar
             "white": "#FFFFFF",
-            "page_bg": "#EAE5E4",             # Light gray page background
-            "table_header_bg": "#D2D5DB",     # Table header gray
+            "page_bg": "#DFD7D4",             # Deeper page background — lets cards pop
+            "table_header_bg": "#D7DCE3",      # Cool slate table header for clear separation
             "card_bg": "#F4F4F4",             # Light gray container card
-            "dark_text": "#313232",           # Dark text
-            "muted_text": "#9B9A9B",          # Medium gray text
-            "border_gray": "#BCBABA",         # Border gray
-            "secondary_text": "#777676",      # Secondary text gray
+            "dark_text": "#242525",           # Dark text
+            "muted_text": "#83807E",          # Medium gray text
+            "border_gray": "#A79E9B",         # Border gray
+            "secondary_text": "#5C5654",      # Secondary text gray
             "near_black": "#0F0F0F",          # Near-black text
-            "frame_bg": "#EAE5E4",
-            "card_border": "#BCBABA",
-            "card_selected_border": "#5E5453",
+            "frame_bg": "#DFD7D4",
+            "card_border": "#A79E9B",
+            "card_selected_border": "#332C2B",
             "card_header_bg": "#FFFFFF",
             "table_shell_bg": "#FFFFFF",
-            "table_border": "#BCBABA",
+            "table_border": "#A79E9B",
             "row_bg_even": "#FFFFFF",
-            "row_bg_odd": "#F8F9FA",
-            "row_sep": "#E2E8F0",
-            "title": "#313232",
-            "text": "#313232",
-            "muted": "#777676",
+            "row_bg_odd": "#EFF1F3",
+            "row_sep": "#D8DEE6",
+            "title": "#242525",
+            "text": "#242525",
+            "muted": "#5C5654",
             "accent": "#2563EB",
             "success": "#16A34A",
-            "pill_bg": "#D2D5DB",
-            "selector_border": "#BCBABA",
+            "pill_bg": "#E1E4E9",
+            "selector_border": "#A79E9B",
             "selector_bg": "#FFFFFF",
-            "selector_active": "#5E5453",
+            "selector_active": "#332C2B",
             "toolbar_divider": "#7A706F",
-            "filter_label": "#6B6767",
+            "filter_label": "#514B49",
         }
 
         self.configure(bg=self.colors["page_bg"])
@@ -1888,7 +1888,7 @@ class Application(tk.Tk):
             title_col,
             text="Sales Acc Receipt Gen",
             bg=self.colors["primary_bg"],
-            fg="#C8CDD4",
+            fg="#E4E6EA",
             font=("Segoe UI", 11),
             anchor="w",
         ).pack(anchor="w", pady=(6, 0))
@@ -1897,7 +1897,7 @@ class Application(tk.Tk):
             banner_inner,
             text="CUSTOMER RECEIPT OPERATIONS",
             bg=self.colors["primary_bg"],
-            fg="#A8ADB4",
+            fg="#C7CBD1",
             font=("Segoe UI", 8, "bold"),
             anchor="center",
         ).pack(anchor="center", pady=(0, 14))
@@ -1909,20 +1909,20 @@ class Application(tk.Tk):
                 "receipt batches and publish accurate customer payment journals to D365."
             ),
             bg=self.colors["primary_bg"],
-            fg="#F3F1F0",
+            fg="#FFFFFF",
             font=("Segoe UI", 13),
             anchor="center",
             justify="center",
             wraplength=440,
         ).pack(anchor="center", pady=(0, 28))
 
-        tk.Frame(banner_inner, bg="#8A817F", height=1).pack(fill="x", pady=(0, 24))
+        tk.Frame(banner_inner, bg="#6E6462", height=1).pack(fill="x", pady=(0, 24))
 
         tk.Label(
             banner_inner,
             text="Platform capabilities",
             bg=self.colors["primary_bg"],
-            fg="#C8CDD4",
+            fg="#E4E6EA",
             font=("Segoe UI", 9, "bold"),
             anchor="w",
         ).pack(anchor="w", pady=(0, 12))
@@ -1939,7 +1939,7 @@ class Application(tk.Tk):
                 item_row,
                 text="✓",
                 bg=self.colors["primary_bg"],
-                fg="#7DD3A8",
+                fg="#4ADE80",
                 font=("Segoe UI", 11, "bold"),
                 width=2,
                 anchor="w",
@@ -1948,7 +1948,7 @@ class Application(tk.Tk):
                 item_row,
                 text=line,
                 bg=self.colors["primary_bg"],
-                fg="#D2D5DB",
+                fg="#E8EAED",
                 font=("Segoe UI", 10),
                 anchor="w",
                 justify="left",
