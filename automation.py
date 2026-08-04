@@ -580,6 +580,48 @@ def _d365_date(date_text, fallback: str = "") -> str:
     return raw or fallback
 
 
+def _infer_d365_date_style(sample: str) -> tuple[str, bool]:
+    """Infer D365 date order (dmy vs mdy) and zero-padding from a live Date cell."""
+    parts = [p.strip() for p in str(sample or "").split("/") if p.strip()]
+    if len(parts) != 3:
+        return "dmy", True
+    try:
+        a, b = int(parts[0]), int(parts[1])
+        y = int(parts[2])
+        if y < 100:
+            y += 2000
+        today = datetime.now()
+        zero_pad = any(len(p) == 2 and p[0] == "0" for p in parts[:2])
+        if a == today.day and b == today.month:
+            return "dmy", zero_pad
+        if a == today.month and b == today.day:
+            return "mdy", zero_pad
+    except ValueError:
+        pass
+    return "dmy", any(len(p) == 2 for p in parts[:2])
+
+
+def _format_date_for_d365(dt: datetime, sample: str = "") -> str:
+    """Format a date using the same order/padding as D365's Date column on the row."""
+    order, zero_pad = _infer_d365_date_style(sample)
+    if order == "mdy":
+        return dt.strftime("%m/%d/%Y") if zero_pad else f"{dt.month}/{dt.day}/{dt.year}"
+    return dt.strftime("%d/%m/%Y") if zero_pad else f"{dt.day}/{dt.month}/{dt.year}"
+
+
+def _d365_value_date_for_fill(date_text, fallback: str = "", *, row_date_sample: str = "") -> str:
+    """Format Value date as dd/mm/yyyy, matching zero-padding from the row's D365 Date cell."""
+    normalized = _d365_date(date_text, "")
+    if not normalized:
+        return str(date_text or "").strip() or fallback
+    try:
+        dt = datetime.strptime(normalized, "%d/%m/%Y")
+        _, zero_pad = _infer_d365_date_style(row_date_sample)
+        return dt.strftime("%d/%m/%Y") if zero_pad else f"{dt.day}/{dt.month}/{dt.year}"
+    except ValueError:
+        return normalized
+
+
 class AutomationStoppedByUser(RuntimeError):
     pass
 
@@ -1046,6 +1088,13 @@ _ACCOUNT_CONTROL_SEL = (
 _JOURNAL_DATA_ROW_SEL = (
     '[role="grid"][aria-label="Journal lines"] [role="row"][id*="-row-"]'
 )
+_VALUE_DATE_INPUT_PREFIX = "LedgerJournalTrans_PwCValueDate_"
+_DATE_INPUT_PREFIX = "LedgerJournalTrans_TransDate_"
+
+
+def _journal_field_input_css(control_prefix: str, row_index: int) -> str:
+    """D365 journal line inputs use ids like LedgerJournalTrans_PwCValueDate_3732_0_2_input."""
+    return f"input[id^='{control_prefix}'][id$='_0_{row_index}_input']"
 
 
 def _journal_line_rows(page):
@@ -2076,7 +2125,6 @@ def _repaste_and_save_row_with_retry(
     label = save_label or f"after complete row {row_index + 1} re-paste"
     attempt = 0
     pasted = False
-    value_date_filled = False
     grid_reset_attempts = 0
     max_grid_reset_attempts = 6
     while True:
@@ -2097,18 +2145,8 @@ def _repaste_and_save_row_with_retry(
                 )
                 pasted = True
                 _dismiss_d365_validation_dialog(page)
-            _save_journal_grid(page, label, settle_ms=100)
+            _save_journal_grid(page, label, settle_ms=200)
             _dismiss_d365_validation_dialog(page)
-            if not value_date_filled and _value_date_needs_fill(page, record, row_index):
-                try:
-                    _activate_journal_row_for_paste(page, row_index)
-                    _confirm_unsaved_changes_dialog(page, wait_ms=500)
-                except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
-                    pass
-                _fill_value_date_at_row(page, record, row_index, force=True)
-                value_date_filled = True
-                _save_journal_grid(page, f"after row {row_index + 1} Value date", settle_ms=100)
-                _dismiss_d365_validation_dialog(page)
         except AutomationStoppedByUser:
             raise
         except (PlaywrightError, PlaywrightTimeoutError) as err:
@@ -3067,6 +3105,72 @@ def _value_date_needs_fill(page, record, row_index: int) -> bool:
     return not actual_norm or actual_norm != expected_norm
 
 
+def _tab_to_value_date_field(page) -> None:
+    """Press Tab once after Save to land on the current row's Value date field."""
+    _wait_for_journal_grid_idle(page, settle_ms=200)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(200)
+
+
+def _fill_focused_value_date(page, value: str) -> bool:
+    """Type Value date into the currently focused PwCValueDate input."""
+    ready = page.evaluate(
+        """
+        () => {
+            const el = document.activeElement;
+            return !!(el && el.tagName === 'INPUT' && /PwCValueDate/i.test(el.id || ''));
+        }
+        """
+    )
+    if not ready:
+        target = page.locator(
+            f"{_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, 0)}:focus"
+        )
+        if target.count() == 0:
+            return False
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("Backspace")
+    page.keyboard.type(str(value), delay=20)
+    return True
+
+
+def _fill_value_date_after_save(
+    page,
+    record,
+    row_index: int,
+    *,
+    force: bool = False,
+) -> None:
+    """After Save on a row: Tab once → type Value date."""
+    expected = str(record.get("value_date", "")).strip()
+    if not expected:
+        return
+    row_date_sample = _read_date_at_row(page, row_index)
+    expected = _d365_value_date_for_fill(
+        expected, expected, row_date_sample=row_date_sample
+    )
+    if not force and not _value_date_needs_fill(page, record, row_index):
+        print(f"Row {row_index + 1}: Value date already correct.")
+        return
+    _tab_to_value_date_field(page)
+    if _fill_focused_value_date(page, expected):
+        print(f"Row {row_index + 1}: Tab → filled Value date '{expected}'.")
+        return
+    target = page.locator(_journal_field_input_css(_VALUE_DATE_INPUT_PREFIX, row_index))
+    if target.count() == 0:
+        print(f"Row {row_index + 1}: Warning: Value date input not found for direct fill.")
+        return
+    try:
+        target.first.wait_for(state="visible", timeout=3000)
+        target.first.fill(str(expected), timeout=10000)
+        target.first.evaluate(
+            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); }"
+        )
+        print(f"Row {row_index + 1}: filled Value date '{expected}' directly.")
+    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as err:
+        print(f"Row {row_index + 1}: Warning: Could not fill Value date '{expected}': {err}")
+
+
 def _fill_value_date_at_row(
     page,
     record,
@@ -3074,37 +3178,8 @@ def _fill_value_date_at_row(
     *,
     force: bool = False,
 ) -> None:
-    """Directly type Value date on the specific journal row (never page-wide .first)."""
-    expected = str(record.get("value_date", "")).strip()
-    if not expected:
-        return
-    expected = _d365_date(expected, expected)
-    if not force and not _value_date_needs_fill(page, record, row_index):
-        return
-    rows = page.locator(_JOURNAL_DATA_ROW_SEL)
-    if rows.count() <= row_index:
-        print(f"Row {row_index + 1}: Warning: Value date row not found for direct fill.")
-        return
-    row = rows.nth(row_index)
-    field = row.locator('input[aria-label="Value date"]:not([readonly])')
-    if field.count() == 0:
-        field = row.locator('input[aria-label="Value date"]')
-    if field.count() == 0:
-        print(f"Row {row_index + 1}: Warning: Value date input not found for direct fill.")
-        return
-    target = field.first
-    try:
-        target.wait_for(state="visible", timeout=3000)
-        _click_locator_robust(target, page, label=f"Value date input row {row_index + 1}")
-        target.press("ControlOrMeta+a")
-        target.press("Backspace")
-        target.fill(str(expected), timeout=10000)
-        target.evaluate(
-            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); el.blur(); }"
-        )
-        print(f"Row {row_index + 1}: filled Value date '{expected}' directly.")
-    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as err:
-        print(f"Row {row_index + 1}: Warning: Could not fill Value date '{expected}': {err}")
+    """Alias for Save → Tab → Value date fill."""
+    _fill_value_date_after_save(page, record, row_index, force=force)
 
 
 def _read_pasted_account(account_field) -> str:
@@ -3424,6 +3499,14 @@ def _read_value_date_at_row(page, row_index: int) -> str:
     value = page.evaluate(
         """
         (rowIndex) => {
+            const byId = document.querySelector(
+                `input[id^='LedgerJournalTrans_PwCValueDate_'][id$='_0_${rowIndex}_input']`
+            );
+            if (byId) {
+                const v = (byId.value || byId.getAttribute('title') || '').trim();
+                if (v) return v;
+            }
+
             const visible = (el) => {
                 if (!el) return false;
                 const st = window.getComputedStyle(el);
@@ -3489,12 +3572,6 @@ def _ensure_value_date_at_row(page, record, row_index: int) -> bool:
     expected = str(record.get("value_date", "")).strip()
     actual = _read_value_date_at_row(page, row_index)
     print(f"Row {row_index + 1}: Value date '{actual or '(blank)'}' does not match expected '{expected}'; fixing.")
-    try:
-        _activate_journal_row_for_paste(page, row_index)
-        _confirm_unsaved_changes_dialog(page, wait_ms=500)
-        _wait_for_journal_grid_idle(page)
-    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
-        pass
     _fill_value_date_at_row(page, record, row_index, force=True)
     return True
 
@@ -3710,18 +3787,7 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
     if not _wait_for_voucher_at_row(page, last_index):
         print(f"Warning: Row {last_index + 1} has no Voucher yet after bulk save; continuing anyway.")
 
-    print("Bulk paste saved; re-pasting rows 2 onward and saving each row before advancing.")
-
-    # Row 1 was bulk-pasted and saved already — fix Value date once here, not inside the loop.
-    if _value_date_needs_fill(page, records[0], 0):
-        try:
-            _activate_journal_row_for_paste(page, 0)
-            _confirm_unsaved_changes_dialog(page, wait_ms=500)
-        except (PlaywrightError, PlaywrightTimeoutError, RuntimeError):
-            pass
-        _fill_value_date_at_row(page, records[0], 0, force=True)
-        _save_journal_grid(page, "after row 1 Value date", settle_ms=100)
-        _dismiss_d365_validation_dialog(page)
+    print("Bulk paste saved; processing each row: Save → Tab → Value date.")
 
     all_issues: list[tuple[int, list[str]]] = []
     for index in range(len(records)):
@@ -3736,25 +3802,16 @@ def _paste_bulk_chunk(page, records, col_defs, controller: AutomationController 
             )
 
         issues = _pending_pasted_row_fields(page, records[index], index)
-        if not issues:
-            print(f"Row {index + 1}: Account and Method of payment confirmed after save.")
-            continue
-
-        print(f"Row {index + 1}: {', '.join(issues)} still blank after save; retrying this row once...")
-        _repaste_and_save_row_with_retry(
-            page,
-            records[index],
-            index,
-            ordered_cols,
-            controller,
-            use_live_order=True,
-            save_label=f"after row {index + 1} immediate retry",
-        )
-        issues = _wait_for_pasted_row_issues(page, records[index], index, timeout_ms=1500)
         if issues:
+            print(
+                f"Row {index + 1}: Warning: {', '.join(issues)} still blank after save "
+                "(skipping re-paste; one paste + save per row)."
+            )
             all_issues.append((index, issues))
         else:
-            print(f"Row {index + 1}: confirmed after retry.")
+            print(f"Row {index + 1}: Account and Method of payment confirmed after save.")
+
+        _fill_value_date_after_save(page, records[index], index)
 
     if all_issues:
         details = "; ".join(f"row {index + 1}: {', '.join(issues)}" for index, issues in all_issues)
