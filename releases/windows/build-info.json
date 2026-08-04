@@ -1,11 +1,11 @@
 {
-  "run_number": 24,
-  "run_id": "30793086511",
-  "sha": "4546ce7bb9575741b532758ddc95b73d2bc271ae",
+  "run_number": 25,
+  "run_id": "30881036300",
+  "sha": "d5fc93001b8cfa5f6c49952c580b27590e53bdf3",
   "branch": "shobhaexe-msi",
-  "built_at_utc": "2026-08-03T07:21:17.6399867+00:00",
+  "built_at_utc": "2026-08-04T05:37:02.4813184+00:00",
   "portable_zip_file": "sobha-windows-portable.zip",
-  "portable_zip_size_bytes": 365527421,
+  "portable_zip_size_bytes": 365545349,
   "msi_file": "sobha-setup.msi",
-  "msi_size_bytes": 300692035
+  "msi_size_bytes": 300708419
 }
